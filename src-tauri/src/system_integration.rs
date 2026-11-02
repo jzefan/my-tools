@@ -73,6 +73,17 @@ pub fn install_macos_service() -> Result<String, String> {
         let _ = Command::new(pbs_bin).arg("-flush").output();
         let _ = Command::new(pbs_bin).arg("-update").output();
 
+        // Register and enable FinderSync Extension for seamless hover cascade menu
+        let appex_path = "/Applications/DocTools.app/Contents/PlugIns/DocToolsFinderSync.appex";
+        if Path::new(appex_path).exists() {
+            let _ = Command::new("pluginkit")
+                .args(["-a", appex_path])
+                .output();
+            let _ = Command::new("pluginkit")
+                .args(["-e", "use", "-i", "com.doctools.desktop.FinderSync"])
+                .output();
+        }
+
         // Restart Finder so context menu and Quick Actions reload instantly
         let _ = Command::new("killall").arg("Finder").output();
 
