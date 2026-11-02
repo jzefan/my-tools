@@ -1,3 +1,4 @@
+pub mod cli_merge;
 pub mod fs_service;
 pub mod models;
 pub mod pdf_compress;
@@ -155,8 +156,34 @@ fn reveal_in_finder(path: String) -> Result<(), String> {
 }
 
 pub fn run() {
-    // Parse launch arguments
+    // Check if headless CLI merge requested
     let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && args[1] == "cli-merge" {
+        let mut paths = Vec::new();
+        let mut output = None;
+        let mut i = 2;
+        while i < args.len() {
+            if args[i] == "-o" && i + 1 < args.len() {
+                output = Some(args[i + 1].clone());
+                i += 2;
+            } else {
+                paths.push(args[i].clone());
+                i += 1;
+            }
+        }
+        match cli_merge::run_cli_merge(&paths, output) {
+            Ok(out) => {
+                println!("SUCCESS: {}", out);
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("ERROR: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Parse launch arguments
     let mut initial_paths = Vec::new();
     let mut initial_action = "merge".to_string();
 

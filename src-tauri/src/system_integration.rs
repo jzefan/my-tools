@@ -337,13 +337,12 @@ fn generate_wflow_xml() -> String {
 				<key>ActionParameters</key>
 				<dict>
 					<key>COMMAND_STRING</key>
-					<string>mkdir -p "$HOME/.doctools"
-python3 -c "import sys, json, os; json.dump({'action': 'merge', 'paths': sys.argv[1:]}, open(os.path.expanduser('~/.doctools/pending_action.json'), 'w'))" "$@"
-
-if pgrep -x "DocTools" &gt;/dev/null || pgrep -x "doc-tools" &gt;/dev/null; then
-    osascript -e 'tell application "DocTools" to activate' 2&gt;/dev/null || true
+					<string>if [ -x "/Applications/DocTools.app/Contents/MacOS/doc-tools-menu" ]; then
+    /Applications/DocTools.app/Contents/MacOS/doc-tools-menu "$@"
 else
-    open -a "DocTools" 2&gt;/dev/null || open "/Applications/DocTools.app" 2&gt;/dev/null || open "$HOME/Applications/DocTools.app" 2&gt;/dev/null || true
+    mkdir -p "$HOME/.doctools"
+    python3 -c "import sys, json, os; json.dump({'action': 'merge', 'paths': sys.argv[1:]}, open(os.path.expanduser('~/.doctools/pending_action.json'), 'w'))" "$@"
+    open -a "DocTools" 2&gt;/dev/null || open "/Applications/DocTools.app" 2&gt;/dev/null || true
 fi
 </string>
 					<key>CheckedForUserDefaultShell</key>
