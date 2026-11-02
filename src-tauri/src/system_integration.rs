@@ -42,16 +42,44 @@ pub fn install_macos_service() -> Result<String, String> {
 
         let doc_wflow_path = contents_dir.join("document.wflow");
         let wflow_content = generate_wflow_xml();
-        fs::write(&doc_wflow_path, wflow_content)
+        fs::write(&doc_wflow_path, &wflow_content)
             .map_err(|e| format!("写入 document.wflow 失败: {}", e))?;
+
+        let info_plist_path = contents_dir.join("Info.plist");
+        let info_plist_content = generate_info_plist();
+        fs::write(&info_plist_path, info_plist_content)
+            .map_err(|e| format!("写入 Info.plist 失败: {}", e))?;
+
+        // Also install second conveniently named workflow: "合并 PDF 与文档 (DocTools).workflow"
+        let wf2_dir = services_dir.join("合并 PDF 与文档 (DocTools).workflow");
+        let contents2_dir = wf2_dir.join("Contents");
+        let _ = fs::create_dir_all(&contents2_dir);
+        let _ = fs::write(contents2_dir.join("document.wflow"), &wflow_content);
+        let _ = fs::write(contents2_dir.join("Info.plist"), generate_info_plist_named("合并 PDF 与文档 (DocTools)", "com.doctools.service.quickmerge"));
+
+        // Register both with LaunchServices
+        let lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
+        let _ = Command::new(lsregister)
+            .args(["-R", "-f", &wf_dir.to_string_lossy()])
+            .output();
+        let _ = Command::new(lsregister)
+            .args(["-R", "-f", &wf2_dir.to_string_lossy()])
+            .output();
+
+        // Enable in pbs plist programmatically so NO manual checkbox in "自定..." is needed
+        enable_services_in_pbs_plist();
 
         // Refresh macOS Services cache
         let _ = Command::new("/System/Library/CoreServices/pbs")
             .arg("-update")
             .output();
 
+        let _ = Command::new("killall")
+            .arg("Finder")
+            .output();
+
         Ok(format!(
-            "访达 (Finder) 右键快捷操作安装成功！\n您现在可以在访达中右键点击任意 PDF、图片或 Word 文档，在「快捷操作 / 服务」中选择「DocTools: 合并与处理」",
+            "访达 (Finder) 快速操作已就绪！\n已在系统底层激活并默认启用，在访达中右键点击任意 PDF、图片或 Word 文档，选择「快速操作」->「合并 PDF 与文档」即可直接唤起内嵌合并界面！",
         ))
     }
 
@@ -150,6 +178,114 @@ pub fn check_pending_action() -> Option<LaunchContext> {
     None
 }
 
+fn generate_info_plist_named(title: &str, bundle_id: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>{bundle_id}</string>
+	<key>CFBundleName</key>
+	<string>{title}</string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSBackgroundColorName</key>
+			<string>background</string>
+			<key>NSIconName</key>
+			<string>NSActionTemplate</string>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>{title}</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>runWorkflowAsService</string>
+			<key>NSSendFileTypes</key>
+			<array>
+				<string>public.item</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>"#
+    )
+}
+
+fn enable_services_in_pbs_plist() {
+    let script = r#"
+import plistlib, os, subprocess
+pbs_path = os.path.expanduser('~/Library/Preferences/pbs.plist')
+if os.path.exists(pbs_path):
+    with open(pbs_path, 'rb') as f:
+        data = plistlib.load(f)
+else:
+    data = {}
+
+status = data.setdefault('NSServicesStatus', {})
+keys = [
+    'com.doctools.service.merge - DocTools: 合并与处理 - runWorkflowAsService',
+    'com.doctools.service.quickmerge - 合并 PDF 与文档 (DocTools) - runWorkflowAsService',
+    os.path.expanduser('~/Library/Services/DocTools - 合并与处理.workflow - DocTools: 合并与处理 - runWorkflowAsService'),
+    os.path.expanduser('~/Library/Services/合并 PDF 与文档 (DocTools).workflow - 合并 PDF 与文档 (DocTools) - runWorkflowAsService')
+]
+for k in keys:
+    status[k] = {
+        'enabled_context_menu': True,
+        'enabled_services_menu': True,
+        'presentation_modes': {
+            'ContextMenu': True,
+            'FinderPreview': True,
+            'ServicesMenu': True,
+            'TouchBar': True
+        }
+    }
+active = data.setdefault('FinderActive', {})
+active['com.doctools.service.merge'] = True
+active['com.doctools.service.quickmerge'] = True
+active['DocTools: 合并与处理'] = True
+active['合并 PDF 与文档 (DocTools)'] = True
+
+with open(pbs_path, 'wb') as f:
+    plistlib.dump(data, f)
+"#;
+    let _ = Command::new("python3").args(["-c", script]).output();
+}
+
+fn generate_info_plist() -> String {
+    r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.doctools.service.merge</string>
+	<key>CFBundleName</key>
+	<string>DocTools: 合并与处理</string>
+	<key>NSServices</key>
+	<array>
+		<dict>
+			<key>NSBackgroundColorName</key>
+			<string>background</string>
+			<key>NSIconName</key>
+			<string>NSActionTemplate</string>
+			<key>NSMenuItem</key>
+			<dict>
+				<key>default</key>
+				<string>DocTools: 合并与处理</string>
+			</dict>
+			<key>NSMessage</key>
+			<string>runWorkflowAsService</string>
+			<key>NSSendFileTypes</key>
+			<array>
+				<string>public.item</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>"#.to_string()
+}
+
 fn generate_wflow_xml() -> String {
     r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -218,7 +354,7 @@ python3 -c "import sys, json, os; json.dump({'action': 'merge', 'paths': sys.arg
 if pgrep -x "DocTools" &gt;/dev/null || pgrep -x "doc-tools" &gt;/dev/null; then
     osascript -e 'tell application "DocTools" to activate' 2&gt;/dev/null || true
 else
-    open -a "DocTools" 2&gt;/dev/null || open "$HOME/Applications/DocTools.app" 2&gt;/dev/null || true
+    open -a "DocTools" 2&gt;/dev/null || open "/Applications/DocTools.app" 2&gt;/dev/null || open "$HOME/Applications/DocTools.app" 2&gt;/dev/null || true
 fi
 </string>
 					<key>CheckedForUserDefaultShell</key>

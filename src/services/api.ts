@@ -69,4 +69,8 @@ export const api = {
   revealInFinder: async (path: string): Promise<void> => {
     return await invoke<void>('reveal_in_finder', { path });
   },
+
+  setWindowMode: async (mode: 'compact' | 'full'): Promise<void> => {
+    return await invoke<void>('set_window_mode', { mode });
+  },
 };

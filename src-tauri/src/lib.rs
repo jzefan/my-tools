@@ -102,6 +102,26 @@ fn get_windows_reg_content() -> String {
 }
 
 #[tauri::command]
+fn set_window_mode(window: tauri::Window, mode: String) -> Result<(), String> {
+    if mode == "compact" {
+        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
+            width: 760.0,
+            height: 540.0,
+        }));
+        let _ = window.center();
+        let _ = window.set_always_on_top(true);
+    } else {
+        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
+            width: 1180.0,
+            height: 780.0,
+        }));
+        let _ = window.center();
+        let _ = window.set_always_on_top(false);
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn reveal_in_finder(path: String) -> Result<(), String> {
     let p = Path::new(&path);
     if !p.exists() {
@@ -189,7 +209,8 @@ pub fn run() {
             install_finder_service,
             uninstall_finder_service,
             get_windows_reg_content,
-            reveal_in_finder
+            reveal_in_finder,
+            set_window_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
