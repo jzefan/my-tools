@@ -198,6 +198,21 @@ pub fn run() {
     }
 
     let initial_context = if !initial_paths.is_empty() {
+        #[cfg(target_os = "macos")]
+        if initial_action == "merge" {
+            let menu_binary = Path::new("/Applications/DocTools.app/Contents/MacOS/doc-tools-menu");
+            if menu_binary.exists() {
+                let status = Command::new(menu_binary)
+                    .args(&initial_paths)
+                    .status();
+                if let Ok(s) = status {
+                    if s.success() {
+                        std::process::exit(0);
+                    }
+                }
+            }
+        }
+
         let first_path = Path::new(&initial_paths[0]);
         let dir = if first_path.is_dir() {
             first_path.to_string_lossy().to_string()
