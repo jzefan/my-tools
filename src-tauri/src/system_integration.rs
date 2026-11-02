@@ -3,7 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const WORKFLOW_NAME: &str = "DocTools - 合并与处理.workflow";
+const WORKFLOW_NAME: &str = "合并 PDF 与文档.workflow";
 
 pub fn check_status() -> IntegrationStatus {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
@@ -36,6 +36,7 @@ pub fn install_macos_service() -> Result<String, String> {
         let services_dir = home.join("Library/Services");
         fs::create_dir_all(&services_dir).map_err(|e| format!("无法创建 Services 目录: {}", e))?;
 
+        // 1. Primary Quick Action: "合并 PDF 与文档.workflow"
         let wf_dir = services_dir.join(WORKFLOW_NAME);
         let contents_dir = wf_dir.join("Contents");
         fs::create_dir_all(&contents_dir).map_err(|e| format!("无法创建 Workflow 目录: {}", e))?;
@@ -46,40 +47,37 @@ pub fn install_macos_service() -> Result<String, String> {
             .map_err(|e| format!("写入 document.wflow 失败: {}", e))?;
 
         let info_plist_path = contents_dir.join("Info.plist");
-        let info_plist_content = generate_info_plist();
-        fs::write(&info_plist_path, info_plist_content)
+        let info_plist_content = generate_info_plist_named("合并 PDF 与文档", "com.doctools.service.quickmerge");
+        fs::write(&info_plist_path, &info_plist_content)
             .map_err(|e| format!("写入 Info.plist 失败: {}", e))?;
 
-        // Also install second conveniently named workflow: "合并 PDF 与文档 (DocTools).workflow"
+        // 2. Also keep alias/backup: "合并 PDF 与文档 (DocTools).workflow"
         let wf2_dir = services_dir.join("合并 PDF 与文档 (DocTools).workflow");
         let contents2_dir = wf2_dir.join("Contents");
         let _ = fs::create_dir_all(&contents2_dir);
         let _ = fs::write(contents2_dir.join("document.wflow"), &wflow_content);
-        let _ = fs::write(contents2_dir.join("Info.plist"), generate_info_plist_named("合并 PDF 与文档 (DocTools)", "com.doctools.service.quickmerge"));
+        let _ = fs::write(
+            contents2_dir.join("Info.plist"),
+            generate_info_plist_named("合并 PDF 与文档 (DocTools)", "com.doctools.service.quickmerge.legacy"),
+        );
 
-        // Register both with LaunchServices
-        let lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
-        let _ = Command::new(lsregister)
-            .args(["-R", "-f", &wf_dir.to_string_lossy()])
-            .output();
-        let _ = Command::new(lsregister)
-            .args(["-R", "-f", &wf2_dir.to_string_lossy()])
-            .output();
+        // Read bundles into pbs
+        let pbs_bin = "/System/Library/CoreServices/pbs";
+        let _ = Command::new(pbs_bin).args(["-read_bundle", &wf_dir.to_string_lossy()]).output();
+        let _ = Command::new(pbs_bin).args(["-read_bundle", &wf2_dir.to_string_lossy()]).output();
 
         // Enable in pbs plist programmatically so NO manual checkbox in "自定..." is needed
         enable_services_in_pbs_plist();
 
-        // Refresh macOS Services cache
-        let _ = Command::new("/System/Library/CoreServices/pbs")
-            .arg("-update")
-            .output();
+        // Refresh macOS Services cache and flush
+        let _ = Command::new(pbs_bin).arg("-flush").output();
+        let _ = Command::new(pbs_bin).arg("-update").output();
 
-        let _ = Command::new("killall")
-            .arg("Finder")
-            .output();
+        // Restart Finder so context menu and Quick Actions reload instantly
+        let _ = Command::new("killall").arg("Finder").output();
 
         Ok(format!(
-            "访达 (Finder) 快速操作已就绪！\n已在系统底层激活并默认启用，在访达中右键点击任意 PDF、图片或 Word 文档，选择「快速操作」->「合并 PDF 与文档」即可直接唤起内嵌合并界面！",
+            "访达 (Finder) 快速操作已就绪！\n已在系统底层默认激活。在访达中右键点击任意 PDF、图片或 Word 文档，选择「快速操作」->「合并 PDF 与文档」即可直接唤起内嵌合并界面！",
         ))
     }
 
@@ -184,10 +182,14 @@ fn generate_info_plist_named(title: &str, bundle_id: &str) -> String {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>zh_CN</string>
 	<key>CFBundleIdentifier</key>
 	<string>{bundle_id}</string>
 	<key>CFBundleName</key>
 	<string>{title}</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
 	<key>NSServices</key>
 	<array>
 		<dict>
@@ -202,9 +204,20 @@ fn generate_info_plist_named(title: &str, bundle_id: &str) -> String {
 			</dict>
 			<key>NSMessage</key>
 			<string>runWorkflowAsService</string>
+			<key>NSRequiredContext</key>
+			<dict>
+				<key>NSApplicationIdentifier</key>
+				<string>com.apple.finder</string>
+			</dict>
 			<key>NSSendFileTypes</key>
 			<array>
+				<string>com.adobe.pdf</string>
+				<string>public.image</string>
 				<string>public.item</string>
+				<string>public.data</string>
+				<string>public.content</string>
+				<string>org.openxmlformats.wordprocessingml.document</string>
+				<string>com.microsoft.word.doc</string>
 			</array>
 		</dict>
 	</array>
@@ -225,10 +238,12 @@ else:
 
 status = data.setdefault('NSServicesStatus', {})
 keys = [
+    'com.doctools.service.quickmerge - 合并 PDF 与文档 - runWorkflowAsService',
+    os.path.expanduser('~/Library/Services/合并 PDF 与文档.workflow - 合并 PDF 与文档 - runWorkflowAsService'),
+    'com.doctools.service.quickmerge.legacy - 合并 PDF 与文档 (DocTools) - runWorkflowAsService',
+    os.path.expanduser('~/Library/Services/合并 PDF 与文档 (DocTools).workflow - 合并 PDF 与文档 (DocTools) - runWorkflowAsService'),
     'com.doctools.service.merge - DocTools: 合并与处理 - runWorkflowAsService',
-    'com.doctools.service.quickmerge - 合并 PDF 与文档 (DocTools) - runWorkflowAsService',
-    os.path.expanduser('~/Library/Services/DocTools - 合并与处理.workflow - DocTools: 合并与处理 - runWorkflowAsService'),
-    os.path.expanduser('~/Library/Services/合并 PDF 与文档 (DocTools).workflow - 合并 PDF 与文档 (DocTools) - runWorkflowAsService')
+    os.path.expanduser('~/Library/Services/DocTools - 合并与处理.workflow - DocTools: 合并与处理 - runWorkflowAsService')
 ]
 for k in keys:
     status[k] = {
@@ -241,49 +256,23 @@ for k in keys:
             'TouchBar': True
         }
     }
+
 active = data.setdefault('FinderActive', {})
-active['com.doctools.service.merge'] = True
+active['合并 PDF 与文档'] = True
 active['com.doctools.service.quickmerge'] = True
-active['DocTools: 合并与处理'] = True
 active['合并 PDF 与文档 (DocTools)'] = True
+active['DocTools: 合并与处理'] = True
+active['com.doctools.service.merge'] = True
+
+ordering = data.setdefault('FinderOrdering', {})
+max_idx = max(ordering.values()) if ordering else 0
+ordering['合并 PDF 与文档'] = max_idx + 1
+ordering['com.doctools.service.quickmerge'] = max_idx + 2
 
 with open(pbs_path, 'wb') as f:
     plistlib.dump(data, f)
 "#;
     let _ = Command::new("python3").args(["-c", script]).output();
-}
-
-fn generate_info_plist() -> String {
-    r#"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>CFBundleIdentifier</key>
-	<string>com.doctools.service.merge</string>
-	<key>CFBundleName</key>
-	<string>DocTools: 合并与处理</string>
-	<key>NSServices</key>
-	<array>
-		<dict>
-			<key>NSBackgroundColorName</key>
-			<string>background</string>
-			<key>NSIconName</key>
-			<string>NSActionTemplate</string>
-			<key>NSMenuItem</key>
-			<dict>
-				<key>default</key>
-				<string>DocTools: 合并与处理</string>
-			</dict>
-			<key>NSMessage</key>
-			<string>runWorkflowAsService</string>
-			<key>NSSendFileTypes</key>
-			<array>
-				<string>public.item</string>
-			</array>
-		</dict>
-	</array>
-</dict>
-</plist>"#.to_string()
 }
 
 fn generate_wflow_xml() -> String {
@@ -486,13 +475,17 @@ fi
 		<key>presentationMode</key>
 		<integer>15</integer>
 		<key>processesInput</key>
-		<false/>
+		<integer>0</integer>
+		<key>serviceApplicationBundleID</key>
+		<string>com.apple.finder</string>
+		<key>serviceApplicationPath</key>
+		<string>/System/Library/CoreServices/Finder.app</string>
 		<key>serviceInputTypeIdentifier</key>
 		<string>com.apple.Automator.fileSystemObject</string>
 		<key>serviceOutputTypeIdentifier</key>
 		<string>com.apple.Automator.nothing</string>
 		<key>serviceProcessesInput</key>
-		<false/>
+		<integer>0</integer>
 		<key>systemImageName</key>
 		<string>NSActionTemplate</string>
 		<key>useAutomaticInputType</key>

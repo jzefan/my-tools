@@ -105,8 +105,8 @@ fn get_windows_reg_content() -> String {
 fn set_window_mode(window: tauri::Window, mode: String) -> Result<(), String> {
     if mode == "compact" {
         let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize {
-            width: 760.0,
-            height: 540.0,
+            width: 860.0,
+            height: 560.0,
         }));
         let _ = window.center();
         let _ = window.set_always_on_top(true);

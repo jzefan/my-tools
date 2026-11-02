@@ -5,7 +5,7 @@ import { MergeView } from './components/MergeView';
 import { CompressView } from './components/CompressView';
 import { WatermarkView } from './components/WatermarkView';
 import { SystemView } from './components/SystemView';
-import { EmbeddedMergeModal } from './components/EmbeddedMergeModal';
+import { FinderColumnMergeView } from './components/FinderColumnMergeView';
 import { api } from './services/api';
 import { IntegrationStatus, LaunchContext } from './types';
 import './App.css';
@@ -30,6 +30,10 @@ export function App() {
   const enterQuickMergeMode = useCallback(async (_ctx: LaunchContext) => {
     setIsQuickMergeMode(true);
     try {
+      const win = getCurrentWindow();
+      await win.show();
+      await win.unminimize();
+      await win.setFocus();
       await api.setWindowMode('compact');
     } catch {
       // fallback
@@ -46,11 +50,11 @@ export function App() {
     }
   }, []);
 
-  // Handle close in quick merge mode
+  // Handle close in quick merge mode (dismiss floating HUD)
   const handleClose = useCallback(async () => {
     try {
       const win = getCurrentWindow();
-      await win.minimize();
+      await win.hide();
     } catch {
       // ignore
     }
@@ -110,11 +114,11 @@ export function App() {
     return () => clearInterval(interval);
   }, [enterQuickMergeMode]);
 
-  // If in Quick Merge mode: Render the embedded in-place directory expansion modal!
+  // If in Quick Merge mode: Render the Finder-style multi-column in-place directory expansion view!
   if (isQuickMergeMode) {
     return (
       <div className="h-screen w-screen overflow-hidden antialiased font-sans">
-        <EmbeddedMergeModal
+        <FinderColumnMergeView
           key={launchContext?.initial_directory || 'quick_merge'}
           initialDirectory={launchContext?.initial_directory || ''}
           initialFiles={launchContext?.initial_paths || []}
