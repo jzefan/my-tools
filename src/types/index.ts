@@ -25,7 +25,7 @@ export interface QuickPath {
 export interface LaunchContext {
   initial_paths: string[];
   initial_directory: string;
-  initial_action: 'merge' | 'compress' | 'watermark' | 'browse';
+  initial_action: 'merge' | 'compress' | 'watermark' | 'convert' | 'browse';
 }
 
 export interface MergeItem {
@@ -94,4 +94,42 @@ export interface IntegrationStatus {
   ghostscript_available: boolean;
   libreoffice_available: boolean;
   textutil_available: boolean;
+}
+
+export interface ConvertItem {
+  input_path: string;
+  output_path?: string;
+  target_format: 'docx' | 'pdf' | 'auto';
+  page_range?: string;
+}
+
+export interface ConvertRequest {
+  items: ConvertItem[];
+  default_output_dir?: string;
+}
+
+export interface ConvertItemResult {
+  input_path: string;
+  output_path: string;
+  success: boolean;
+  message: string;
+  original_size: number;
+  converted_size: number;
+  engine_used: string;
+}
+
+export interface ConvertResult {
+  success: boolean;
+  message: string;
+  results: ConvertItemResult[];
+}
+
+export interface ConvertEngineStatus {
+  pdf2docx_available: boolean;
+  docx2pdf_available: boolean;
+  soffice_available: boolean;
+  pandoc_available: boolean;
+  chrome_available: boolean;
+  pages_available: boolean;
+  word_available: boolean;
 }

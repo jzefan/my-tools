@@ -1,10 +1,10 @@
 import React from 'react';
-import { Layers, Minimize2, Sparkles, Settings, FileText, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Layers, Minimize2, Sparkles, Settings, FileText, CheckCircle2, AlertCircle, ArrowLeftRight } from 'lucide-react';
 import { IntegrationStatus } from '../types';
 
 interface SidebarProps {
-  activeTab: 'merge' | 'compress' | 'watermark' | 'system';
-  setActiveTab: (tab: 'merge' | 'compress' | 'watermark' | 'system') => void;
+  activeTab: 'merge' | 'compress' | 'watermark' | 'convert' | 'system';
+  setActiveTab: (tab: 'merge' | 'compress' | 'watermark' | 'convert' | 'system') => void;
   integrationStatus: IntegrationStatus | null;
 }
 
@@ -21,6 +21,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
       icon: Layers,
       color: 'text-indigo-500',
       activeBg: 'bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800',
+    },
+    {
+      id: 'convert' as const,
+      label: '格式转换',
+      sublabel: 'PDF 转 Word / Word 转 PDF',
+      icon: ArrowLeftRight,
+      color: 'text-blue-500',
+      activeBg: 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-800',
     },
     {
       id: 'compress' as const,

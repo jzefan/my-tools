@@ -4,12 +4,12 @@ import FinderSync
 @objc(FinderSync)
 class FinderSync: FIFinderSync {
     let supportedExtensions: Set<String> = [
-        "pdf", "png", "jpg", "jpeg", "webp", "bmp", "docx", "doc"
+        "pdf", "png", "jpg", "jpeg", "webp", "bmp", "docx", "doc", "txt", "md"
     ]
 
     override init() {
         super.init()
-        NSLog("[DocToolsFinderSync] Initialized")
+        NSLog("[DocToolsFinderSync] Initialized and registering directory URLs")
         let home = URL(fileURLWithPath: NSHomeDirectory())
         let volumes = URL(fileURLWithPath: "/Volumes")
         FIFinderSyncController.default().directoryURLs = [home, volumes]
@@ -22,18 +22,16 @@ class FinderSync: FIFinderSync {
         }
 
         let firstURL = selectedURLs[0]
-        let ext = firstURL.pathExtension.lowercased()
-
-        if selectedURLs.count == 1 && !entryIsDir(url: firstURL) && !supportedExtensions.contains(ext) {
-            return nil
-        }
+        let anchorURL = firstURL
+        let currentDirURL = entryIsDir(url: anchorURL) ? anchorURL : anchorURL.deletingLastPathComponent()
+        let parentDirURL = currentDirURL.deletingLastPathComponent()
 
         let menu = NSMenu(title: "")
         let rootItem = NSMenuItem(title: "合并 PDF 与文档", action: nil, keyEquivalent: "")
         let rootSubmenu = NSMenu(title: "合并 PDF 与文档")
         rootItem.submenu = rootSubmenu
 
-        // Case 1: Multiple files selected in Finder before right-clicking
+        // Case 1: Multiple files were selected in Finder before right-clicking
         if selectedURLs.count > 1 {
             let multiItem = NSMenuItem(
                 title: "⚡ 直接合并已选中的 \(selectedURLs.count) 个文件",
@@ -46,11 +44,7 @@ class FinderSync: FIFinderSync {
             rootSubmenu.addItem(NSMenuItem.separator())
         }
 
-        let anchorURL = firstURL
-        let currentDirURL = entryIsDir(url: anchorURL) ? anchorURL : anchorURL.deletingLastPathComponent()
-        let parentDirURL = currentDirURL.deletingLastPathComponent()
-
-        // Header: Anchor File
+        // Header: Current Anchor File
         let header = NSMenuItem(title: "📄 点选文件: \(anchorURL.lastPathComponent)", action: nil, keyEquivalent: "")
         header.isEnabled = false
         rootSubmenu.addItem(header)
@@ -67,8 +61,11 @@ class FinderSync: FIFinderSync {
                 if entry.path == anchorURL.path { continue }
                 if entryIsDir(url: entry) {
                     currentDirFolders.append(entry)
-                } else if supportedExtensions.contains(entry.pathExtension.lowercased()) {
-                    currentDirFiles.append(entry)
+                } else {
+                    let ext = entry.pathExtension.lowercased()
+                    if supportedExtensions.contains(ext) {
+                        currentDirFiles.append(entry)
+                    }
                 }
             }
         }
@@ -76,8 +73,9 @@ class FinderSync: FIFinderSync {
         // Show current directory files directly in the hover submenu
         if !currentDirFiles.isEmpty {
             for file in currentDirFiles {
+                let icon = iconForExtension(file.pathExtension.lowercased())
                 let item = NSMenuItem(
-                    title: "  + 合并: \(file.lastPathComponent)",
+                    title: "\(icon) 合并: \(file.lastPathComponent)",
                     action: #selector(mergeAnchorWithTarget(_:)),
                     keyEquivalent: ""
                 )
@@ -101,10 +99,12 @@ class FinderSync: FIFinderSync {
                 if let subEntries = try? fm.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
                     var hasSubFiles = false
                     for subFile in subEntries {
-                        if supportedExtensions.contains(subFile.pathExtension.lowercased()) {
+                        let ext = subFile.pathExtension.lowercased()
+                        if supportedExtensions.contains(ext) {
                             hasSubFiles = true
+                            let icon = iconForExtension(ext)
                             let item = NSMenuItem(
-                                title: "📄 \(subFile.lastPathComponent)",
+                                title: "\(icon) \(subFile.lastPathComponent)",
                                 action: #selector(mergeAnchorWithTarget(_:)),
                                 keyEquivalent: ""
                             )
@@ -127,22 +127,27 @@ class FinderSync: FIFinderSync {
         // Section C: Parent directory
         if parentDirURL.path != currentDirURL.path && parentDirURL.path != "/" {
             rootSubmenu.addItem(NSMenuItem.separator())
-            let parentItem = NSMenuItem(title: "📁 上级目录 (\(parentDirURL.lastPathComponent))", action: nil, keyEquivalent: "")
-            let parentSubmenu = NSMenu(title: parentDirURL.lastPathComponent)
+            let parentDirName = parentDirURL.lastPathComponent
+            let parentItem = NSMenuItem(title: "📁 上级目录 (\(parentDirName))", action: nil, keyEquivalent: "")
+            let parentSubmenu = NSMenu(title: parentDirName)
 
             if let parentEntries = try? fm.contentsOfDirectory(at: parentDirURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
                 var hasParentFiles = false
                 for pFile in parentEntries {
-                    if !entryIsDir(url: pFile) && supportedExtensions.contains(pFile.pathExtension.lowercased()) {
-                        hasParentFiles = true
-                        let item = NSMenuItem(
-                            title: "📄 \(pFile.lastPathComponent)",
-                            action: #selector(mergeAnchorWithTarget(_:)),
-                            keyEquivalent: ""
-                        )
-                        item.target = self
-                        item.representedObject = [anchorURL.path, pFile.path]
-                        parentSubmenu.addItem(item)
+                    if !entryIsDir(url: pFile) {
+                        let ext = pFile.pathExtension.lowercased()
+                        if supportedExtensions.contains(ext) {
+                            hasParentFiles = true
+                            let icon = iconForExtension(ext)
+                            let item = NSMenuItem(
+                                title: "\(icon) \(pFile.lastPathComponent)",
+                                action: #selector(mergeAnchorWithTarget(_:)),
+                                keyEquivalent: ""
+                            )
+                            item.target = self
+                            item.representedObject = [anchorURL.path, pFile.path]
+                            parentSubmenu.addItem(item)
+                        }
                     }
                 }
                 if !hasParentFiles {
@@ -166,8 +171,28 @@ class FinderSync: FIFinderSync {
         openPicker.representedObject = anchorURL.path
         rootSubmenu.addItem(openPicker)
 
+        // Section E: Full Studio App
+        let openStudio = NSMenuItem(
+            title: "⚡ 打开 DocTools 完整套件...",
+            action: #selector(openFullStudio(_:)),
+            keyEquivalent: ""
+        )
+        openStudio.target = self
+        openStudio.representedObject = selectedURLs.map { $0.path }
+        rootSubmenu.addItem(openStudio)
+
         menu.addItem(rootItem)
         return menu
+    }
+
+    private func iconForExtension(_ ext: String) -> String {
+        switch ext {
+        case "pdf": return "📕"
+        case "docx", "doc": return "📘"
+        case "png", "jpg", "jpeg", "webp", "bmp": return "🖼"
+        case "txt", "md": return "📄"
+        default: return "📄"
+        }
     }
 
     private func entryIsDir(url: URL) -> Bool {
@@ -192,7 +217,7 @@ class FinderSync: FIFinderSync {
             NSApp.activate(ignoringOtherApps: true)
             let panel = NSOpenPanel()
             panel.title = "选择要合并的一个或多个文件"
-            panel.prompt = "合并"
+            panel.prompt = "开始合并"
             panel.directoryURL = URL(fileURLWithPath: anchorPath).deletingLastPathComponent()
             panel.allowsMultipleSelection = true
             panel.canChooseFiles = true
@@ -208,6 +233,27 @@ class FinderSync: FIFinderSync {
                 self.executeCliMerge(paths: allPaths)
             }
         }
+    }
+
+    @objc func openFullStudio(_ sender: NSMenuItem) {
+        guard let paths = sender.representedObject as? [String] else { return }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let pendingDir = home.appendingPathComponent(".doctools")
+        try? FileManager.default.createDirectory(at: pendingDir, withIntermediateDirectories: true)
+        let pendingFile = pendingDir.appendingPathComponent("pending_action.json")
+
+        let payload: [String: Any] = [
+            "action": "merge",
+            "paths": paths
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: payload, options: .prettyPrinted) {
+            try? data.write(to: pendingFile)
+        }
+
+        let appURL = URL(fileURLWithPath: "/Applications/DocTools.app")
+        let config = NSWorkspace.OpenConfiguration()
+        config.activates = true
+        NSWorkspace.shared.openApplication(at: appURL, configuration: config, completionHandler: nil)
     }
 
     func executeCliMerge(paths: [String]) {

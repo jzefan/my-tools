@@ -31,7 +31,7 @@ pub struct QuickPath {
 pub struct LaunchContext {
     pub initial_paths: Vec<String>,
     pub initial_directory: String,
-    pub initial_action: String, // "merge", "compress", "watermark", "browse"
+    pub initial_action: String, // "merge", "compress", "watermark", "convert", "browse"
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -109,4 +109,47 @@ pub struct IntegrationStatus {
     pub ghostscript_available: bool,
     pub libreoffice_available: bool,
     pub textutil_available: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ConvertItem {
+    pub input_path: String,
+    pub output_path: Option<String>,
+    pub target_format: String, // "docx" | "pdf" | "auto"
+    pub page_range: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ConvertRequest {
+    pub items: Vec<ConvertItem>,
+    pub default_output_dir: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ConvertItemResult {
+    pub input_path: String,
+    pub output_path: String,
+    pub success: bool,
+    pub message: String,
+    pub original_size: u64,
+    pub converted_size: u64,
+    pub engine_used: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ConvertResult {
+    pub success: bool,
+    pub message: String,
+    pub results: Vec<ConvertItemResult>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ConvertEngineStatus {
+    pub pdf2docx_available: bool,
+    pub docx2pdf_available: bool,
+    pub soffice_available: bool,
+    pub pandoc_available: bool,
+    pub chrome_available: bool,
+    pub pages_available: bool,
+    pub word_available: bool,
 }

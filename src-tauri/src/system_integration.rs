@@ -12,12 +12,7 @@ pub fn check_status() -> IntegrationStatus {
 
     let ghostscript_available = crate::pdf_compress::check_ghostscript_available();
 
-    let soffice_available = Command::new("soffice")
-        .arg("--version")
-        .output()
-        .is_ok()
-        || Path::new("/opt/homebrew/bin/soffice").exists()
-        || Path::new("/Applications/LibreOffice.app").exists();
+    let soffice_available = crate::pdf_convert::get_soffice_cmd().is_some();
 
     let textutil_available = Path::new("/usr/bin/textutil").exists();
 

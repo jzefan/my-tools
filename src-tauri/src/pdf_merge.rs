@@ -7,7 +7,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 pub fn merge_documents(request: MergeRequest) -> Result<OperationResult, String> {
     if request.items.is_empty() {
@@ -176,76 +175,7 @@ pub fn convert_image_to_pdf(image_path: &Path, output_pdf: &Path) -> Result<(), 
 }
 
 pub fn convert_word_to_pdf(doc_path: &Path, output_pdf: &Path) -> Result<(), String> {
-    let soffice_paths = [
-        "/opt/homebrew/bin/soffice",
-        "/usr/local/bin/soffice",
-        "/Applications/LibreOffice.app/Contents/MacOS/soffice",
-        "soffice",
-    ];
-
-    for soffice in soffice_paths {
-        let parent_dir = output_pdf.parent().unwrap_or(Path::new("."));
-        let status = Command::new(soffice)
-            .args([
-                "--headless",
-                "--convert-to",
-                "pdf:writer_pdf_Export",
-                "--outdir",
-                &parent_dir.to_string_lossy(),
-                &doc_path.to_string_lossy(),
-            ])
-            .output();
-
-        if let Ok(output) = status {
-            if output.status.success() {
-                let stem = doc_path.file_stem().unwrap().to_string_lossy();
-                let generated_pdf = parent_dir.join(format!("{}.pdf", stem));
-                if generated_pdf.exists() {
-                    if generated_pdf != output_pdf {
-                        let _ = fs::rename(&generated_pdf, output_pdf);
-                    }
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let temp_html = output_pdf.with_extension("html");
-        let tu_status = Command::new("/usr/bin/textutil")
-            .args([
-                "-convert",
-                "html",
-                "-output",
-                &temp_html.to_string_lossy(),
-                &doc_path.to_string_lossy(),
-            ])
-            .output();
-
-        if let Ok(output) = tu_status {
-            if output.status.success() && temp_html.exists() {
-                let html_path_str = temp_html.to_string_lossy().to_string();
-                let cups = Command::new("/usr/sbin/cupsfilter")
-                    .args([&html_path_str])
-                    .output();
-
-                let _ = fs::remove_file(&temp_html);
-
-                if let Ok(c_out) = cups {
-                    if c_out.status.success() && !c_out.stdout.is_empty() {
-                        fs::write(output_pdf, &c_out.stdout).map_err(|e| e.to_string())?;
-                        return Ok(());
-                    }
-                }
-            }
-        }
-    }
-
-    Err(
-        "未能转换 Word 文档: 请安装 LibreOffice (brew install libreoffice) 以获得最佳 Word 转 PDF 效果"
-            .to_string(),
-    )
+    crate::pdf_convert::convert_single_word_to_pdf(doc_path, output_pdf).map(|_| ())
 }
 
 fn parse_page_range(range_str: &str, total_pages: u32) -> Vec<u32> {

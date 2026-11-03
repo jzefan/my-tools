@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Sidebar } from './components/Sidebar';
 import { MergeView } from './components/MergeView';
+import { ConvertView } from './components/ConvertView';
 import { CompressView } from './components/CompressView';
 import { WatermarkView } from './components/WatermarkView';
 import { SystemView } from './components/SystemView';
@@ -11,7 +12,7 @@ import { IntegrationStatus, LaunchContext } from './types';
 import './App.css';
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'merge' | 'compress' | 'watermark' | 'system'>('merge');
+  const [activeTab, setActiveTab] = useState<'merge' | 'compress' | 'watermark' | 'convert' | 'system'>('merge');
   const [launchContext, setLaunchContext] = useState<LaunchContext | null>(null);
   const [integrationStatus, setIntegrationStatus] = useState<IntegrationStatus | null>(null);
   const [isQuickMergeMode, setIsQuickMergeMode] = useState<boolean>(false);
@@ -74,6 +75,8 @@ export function App() {
           setActiveTab('compress');
         } else if (ctx.initial_action === 'watermark') {
           setActiveTab('watermark');
+        } else if (ctx.initial_action === 'convert') {
+          setActiveTab('convert');
         } else {
           setActiveTab('merge');
         }
@@ -101,6 +104,10 @@ export function App() {
           } else if (pending.initial_action === 'watermark') {
             setIsQuickMergeMode(false);
             setActiveTab('watermark');
+            api.setWindowMode('full');
+          } else if (pending.initial_action === 'convert') {
+            setIsQuickMergeMode(false);
+            setActiveTab('convert');
             api.setWindowMode('full');
           } else {
             setActiveTab('merge');
@@ -146,6 +153,13 @@ export function App() {
             key={launchContext?.initial_directory || 'default_merge'}
             initialDirectory={launchContext?.initial_directory || ''}
             initialFiles={launchContext?.initial_paths || []}
+          />
+        )}
+
+        {activeTab === 'convert' && (
+          <ConvertView
+            key={launchContext?.initial_paths?.[0] || 'default_convert'}
+            initialFile={launchContext?.initial_paths?.[0]}
           />
         )}
 

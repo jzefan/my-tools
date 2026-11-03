@@ -2,13 +2,15 @@ pub mod cli_merge;
 pub mod fs_service;
 pub mod models;
 pub mod pdf_compress;
+pub mod pdf_convert;
 pub mod pdf_merge;
 pub mod pdf_watermark;
 pub mod system_integration;
 
 use models::{
-    CompressRequest, CompressResult, DirContent, FileItem, IntegrationStatus, LaunchContext,
-    MergeRequest, OperationResult, QuickPath, WatermarkAnalysis, WatermarkRemoveRequest,
+    CompressRequest, CompressResult, ConvertEngineStatus, ConvertRequest, ConvertResult,
+    DirContent, FileItem, IntegrationStatus, LaunchContext, MergeRequest, OperationResult,
+    QuickPath, WatermarkAnalysis, WatermarkRemoveRequest,
 };
 use std::path::Path;
 use std::process::Command;
@@ -80,6 +82,70 @@ fn analyze_watermarks(path: String) -> Result<WatermarkAnalysis, String> {
 #[tauri::command]
 fn remove_watermarks_from_pdf(request: WatermarkRemoveRequest) -> Result<OperationResult, String> {
     pdf_watermark::remove_pdf_watermarks(request)
+}
+
+#[tauri::command]
+fn convert_documents(request: ConvertRequest) -> Result<ConvertResult, String> {
+    pdf_convert::convert_documents(request)
+}
+
+#[tauri::command]
+fn get_convert_engine_status() -> ConvertEngineStatus {
+    pdf_convert::check_convert_engines()
+}
+
+#[tauri::command]
+fn pick_file_dialog(prompt: Option<String>, for_folder: Option<bool>) -> Result<Option<String>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let is_folder = for_folder.unwrap_or(false);
+        let title = prompt.unwrap_or_else(|| if is_folder { "请选择文件夹".to_string() } else { "请选择文件".to_string() });
+        let script = if is_folder {
+            format!(
+                r#"try
+POSIX path of (choose folder with prompt "{}")
+on error
+""
+end try"#,
+                title
+            )
+        } else {
+            format!(
+                r#"try
+POSIX path of (choose file with prompt "{}" of type {{"pdf", "docx", "doc"}})
+on error
+""
+end try"#,
+                title
+            )
+        };
+
+        let output = Command::new("osascript")
+            .args(["-e", &script])
+            .output()
+            .map_err(|e| e.to_string())?;
+
+        let res = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if res.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(res))
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (prompt, for_folder);
+        Ok(None)
+    }
+}
+
+#[tauri::command]
+fn open_file_path(app: tauri::AppHandle, path: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(&path, None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -189,7 +255,7 @@ pub fn run() {
 
     if args.len() > 1 {
         for arg in &args[1..] {
-            if arg == "merge" || arg == "compress" || arg == "watermark" {
+            if arg == "merge" || arg == "compress" || arg == "watermark" || arg == "convert" {
                 initial_action = arg.clone();
             } else if !arg.starts_with('-') && Path::new(arg).exists() {
                 initial_paths.push(arg.clone());
@@ -247,6 +313,10 @@ pub fn run() {
             compress_pdf_file,
             analyze_watermarks,
             remove_watermarks_from_pdf,
+            convert_documents,
+            get_convert_engine_status,
+            pick_file_dialog,
+            open_file_path,
             get_integration_status,
             install_finder_service,
             uninstall_finder_service,

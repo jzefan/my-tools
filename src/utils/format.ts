@@ -34,6 +34,13 @@ export function generateDefaultOutputPath(inputPath: string, suffix: string): st
   return `${base}_${suffix}.pdf`;
 }
 
+export function generateDefaultConvertOutputPath(inputPath: string, targetExt: 'docx' | 'pdf'): string {
+  const dotIndex = inputPath.lastIndexOf('.');
+  if (dotIndex === -1) return `${inputPath}_converted.${targetExt}`;
+  const base = inputPath.substring(0, dotIndex);
+  return `${base}_converted.${targetExt}`;
+}
+
 export function getFileTypeBadge(extension: string): { label: string; color: string } {
   const ext = extension.toLowerCase();
   switch (ext) {

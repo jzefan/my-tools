@@ -1,5 +1,6 @@
 use doc_tools_lib::models::{CompressRequest, MergeItem, MergeRequest, WatermarkRemoveRequest};
 use doc_tools_lib::pdf_compress::compress_pdf;
+use doc_tools_lib::pdf_convert::convert_single_pdf_to_word;
 use doc_tools_lib::pdf_merge::{convert_image_to_pdf, merge_documents};
 use doc_tools_lib::pdf_watermark::{analyze_pdf_watermarks, remove_pdf_watermarks};
 use doc_tools_lib::system_integration;
@@ -205,4 +206,124 @@ fn test_system_integration_install() {
 
     let post_status = system_integration::check_status();
     assert!(post_status.macos_service_installed, "Service should be reported as installed");
+}
+
+#[test]
+fn test_toc_conversion_formatting() {
+    let temp_dir = std::env::temp_dir().join("doctools_test_toc");
+    let _ = fs::create_dir_all(&temp_dir);
+
+    let sample_pdf = temp_dir.join("toc_sample.pdf");
+    let output_docx = temp_dir.join("toc_sample.docx");
+
+    // Create a TOC PDF with Python PyMuPDF if available, or create with lopdf
+    let _py_create = std::process::Command::new("python3")
+        .args([
+            "-c",
+            &format!(
+                r#"
+import fitz, os
+doc = fitz.open()
+page = doc.new_page(width=595, height=842)
+lines = [
+    '目录',
+    '一、项目立项资料................................................................................4',
+    '(一) 项目升级改造方案....................................................................4',
+    '(二) 项目评审意见 (缺)................................................................8',
+    '(三) 项目采购合同..............................................................................11',
+    '二、项目终验资料..............................................................................1',
+    '(一) 开工报告....................................................................................1',
+    'IRS 申请记录 (缺)..........................................................................2'
+]
+y = 80
+for line in lines:
+    page.insert_text((72, y), line, fontsize=12)
+    y += 35
+doc.save(r'{}')
+"#,
+                sample_pdf.to_string_lossy()
+            ),
+        ])
+        .output();
+
+    if !sample_pdf.exists() {
+        // Fallback: create an English TOC PDF using lopdf
+        let mut doc = Document::with_version("1.5");
+        let pages_id = (1, 0);
+        let content_ops = vec![
+            Operation::new("BT", vec![]),
+            Operation::new("/F1", vec![Object::Integer(16)]),
+            Operation::new("Td", vec![Object::Real(72.0), Object::Real(750.0)]),
+            Operation::new("Tj", vec![Object::string_literal("Table of Contents")]),
+            Operation::new("Td", vec![Object::Real(0.0), Object::Real(-40.0)]),
+            Operation::new("/F1", vec![Object::Integer(12)]),
+            Operation::new("Tj", vec![Object::string_literal("1. Project Initiation Documentation............................................................4")]),
+            Operation::new("Td", vec![Object::Real(0.0), Object::Real(-30.0)]),
+            Operation::new("Tj", vec![Object::string_literal("   1.1 System Upgrade Plan......................................................................4")]),
+            Operation::new("Td", vec![Object::Real(0.0), Object::Real(-30.0)]),
+            Operation::new("Tj", vec![Object::string_literal("   1.2 Review Comments (Pending)................................................................8")]),
+            Operation::new("ET", vec![]),
+        ];
+        let content = Content { operations: content_ops };
+        let content_bytes = content.encode().unwrap();
+        let content_stream = Stream::new(Dictionary::new(), content_bytes);
+        let content_id = doc.add_object(Object::Stream(content_stream));
+
+        let mut page_dict = Dictionary::new();
+        page_dict.set("Type", Object::Name(b"Page".to_vec()));
+        page_dict.set("Parent", Object::Reference(pages_id));
+        page_dict.set("MediaBox", Object::Array(vec![Object::Real(0.0), Object::Real(0.0), Object::Real(595.0), Object::Real(842.0)]));
+        page_dict.set("Contents", Object::Reference(content_id));
+
+        let mut font_dict = Dictionary::new();
+        font_dict.set("Type", Object::Name(b"Font".to_vec()));
+        font_dict.set("Subtype", Object::Name(b"Type1".to_vec()));
+        font_dict.set("BaseFont", Object::Name(b"Helvetica".to_vec()));
+        let font_id = doc.add_object(Object::Dictionary(font_dict));
+
+        let mut f_dict = Dictionary::new();
+        f_dict.set("F1", Object::Reference(font_id));
+        let mut r_dict = Dictionary::new();
+        r_dict.set("Font", Object::Dictionary(f_dict));
+        page_dict.set("Resources", Object::Dictionary(r_dict));
+
+        let page_id = doc.add_object(Object::Dictionary(page_dict));
+        let mut pages_dict = Dictionary::new();
+        pages_dict.set("Type", Object::Name(b"Pages".to_vec()));
+        pages_dict.set("Count", Object::Integer(1));
+        pages_dict.set("Kids", Object::Array(vec![Object::Reference(page_id)]));
+        doc.objects.insert(pages_id, Object::Dictionary(pages_dict));
+
+        let mut catalog = Dictionary::new();
+        catalog.set("Type", Object::Name(b"Catalog".to_vec()));
+        catalog.set("Pages", Object::Reference(pages_id));
+        let catalog_id = doc.add_object(Object::Dictionary(catalog));
+        doc.trailer.set("Root", Object::Reference(catalog_id));
+
+        doc.save(&sample_pdf).unwrap();
+    }
+
+    assert!(sample_pdf.exists(), "Sample TOC PDF should exist");
+
+    // Perform conversion
+    let res = convert_single_pdf_to_word(&sample_pdf, &output_docx, None);
+    assert!(res.is_ok(), "PDF to Word conversion failed: {:?}", res);
+    assert!(output_docx.exists(), "Output DOCX file should exist");
+    let engine = res.unwrap();
+    println!("TOC test completed using engine: {}", engine);
+
+    // Verify DOCX content: unpack word/document.xml and check that paragraphs are separate and no collision
+    let file = fs::File::open(&output_docx).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    let mut doc_xml = String::new();
+    if let Ok(mut doc_file) = archive.by_name("word/document.xml") {
+        use std::io::Read;
+        doc_file.read_to_string(&mut doc_xml).unwrap();
+    }
+    assert!(!doc_xml.is_empty(), "word/document.xml should not be empty");
+
+    // Verify that TOC entries do not collide in a single paragraph run like "4 (一)"
+    assert!(!doc_xml.contains("4 (一)"), "TOC lines should not collide together!");
+
+    let _ = fs::remove_dir_all(&temp_dir);
 }

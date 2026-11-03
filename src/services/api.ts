@@ -2,6 +2,9 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   CompressRequest,
   CompressResult,
+  ConvertEngineStatus,
+  ConvertRequest,
+  ConvertResult,
   DirContent,
   FileItem,
   IntegrationStatus,
@@ -48,6 +51,22 @@ export const api = {
 
   removeWatermarks: async (request: WatermarkRemoveRequest): Promise<OperationResult> => {
     return await invoke<OperationResult>('remove_watermarks_from_pdf', { request });
+  },
+
+  convertDocuments: async (request: ConvertRequest): Promise<ConvertResult> => {
+    return await invoke<ConvertResult>('convert_documents', { request });
+  },
+
+  getConvertEngineStatus: async (): Promise<ConvertEngineStatus> => {
+    return await invoke<ConvertEngineStatus>('get_convert_engine_status');
+  },
+
+  pickFileDialog: async (prompt?: string, forFolder?: boolean): Promise<string | null> => {
+    return await invoke<string | null>('pick_file_dialog', { prompt, forFolder });
+  },
+
+  openFilePath: async (path: string): Promise<void> => {
+    return await invoke<void>('open_file_path', { path });
   },
 
   getIntegrationStatus: async (): Promise<IntegrationStatus> => {
