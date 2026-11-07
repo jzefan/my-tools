@@ -33,7 +33,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </div>
           <div className="flex items-center space-x-2">
             <h1 className="text-base font-semibold text-slate-900 dark:text-slate-100 tracking-tight">
-              工作台
+              my-tools
             </h1>
             <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800">
               Pro

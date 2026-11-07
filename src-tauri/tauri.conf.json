@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Workspace",
+  "productName": "my-tools",
   "version": "1.0.0",
-  "identifier": "com.workspace.desktop",
+  "identifier": "com.mytools.desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "工作台",
+        "title": "my-tools",
         "width": 1180,
         "height": 780,
         "minWidth": 920,

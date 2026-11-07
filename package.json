@@ -1,7 +1,7 @@
 {
-  "name": "doc-tools",
+  "name": "my-tools",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "app": "tauri dev",
@@ -29,6 +29,10 @@
     "tauri:docs": "tauri dev --config src-tauri/tauri.docs.conf.json",
     "build": "tsc && vite build",
     "build:docs": "tsc && vite build --mode docs",
+    "package:mac": "bash scripts/build-macos.sh all",
+    "package:mac-arm64": "bash scripts/build-macos.sh arm64",
+    "package:mac-intel": "bash scripts/build-macos.sh x64",
+    "package:windows": "tauri build --bundles nsis",
     "test:paper": "node --test tests/paper*.test.mjs tests/pdfjs-offline.test.mjs",
     "test:paper-ui": "node tests/run-paper-reader-ui.mjs",
     "build:paper": "tsc && vite build --mode paper",

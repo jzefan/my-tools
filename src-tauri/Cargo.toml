@@ -1,8 +1,8 @@
 [package]
-name = "doc-tools"
+name = "my-tools"
 version = "1.0.0"
-description = "DocTools - PDF Productivity Toolkit"
-authors = ["DocTools"]
+description = "my-tools - Productivity Toolkit"
+authors = ["my-tools"]
 edition = "2024"
 autobins = false
 default-run = "my-tools"

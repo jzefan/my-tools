@@ -65,7 +65,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     ? 'Cleaner'
                     : enabledSuites.length === 1 && enabledSuites[0].id === 'media'
                     ? 'MediaDesk'
-                    : '工作台'}
+                    : 'my-tools'}
                 </span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 font-medium">
                   Pro
