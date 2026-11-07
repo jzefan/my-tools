@@ -20,7 +20,7 @@ jobs:
       matrix:
         platform:
           - name: macOS-Apple-Silicon
-            os: macos-14
+            os: macos-13
             target: aarch64-apple-darwin
             arch_id: macos-arm64
           - name: macOS-Intel

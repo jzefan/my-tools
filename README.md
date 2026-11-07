@@ -1,6 +1,6 @@
-# DocTools - 全能 PDF 与文档桌面生产力套件 (Mac & Windows)
+# my-tools - 跨平台多功能桌面生产力套件 (Mac & Windows)
 
-一款基于 **Tauri 2.0 (Rust) + React 19 + TypeScript + Tailwind CSS** 打造的极轻量、高性能跨平台桌面文档工具。
+一款基于 **Tauri 2.0 (Rust) + React 19 + TypeScript + Tailwind CSS** 打造的极轻量、高性能跨平台桌面文档与生产力工具箱。
 
 工具箱现包含网盘搜索与自媒体账号一键转发分发模块：
 - **自媒体分发**：支持抖音、小红书、B站、视频号、快手、知乎、微信公众号、今日头条、百家号、微博及自定义平台的多账号登录态隔离管理、图文与短视频一键分发、隐式静默发布与显示交互预填、发布任务队列中心、常用话术库、关键词自动回复与视频画幅/AI 文案辅助工具。启动命令 `pnpm app:media`，开发预览 `pnpm dev:media`。
@@ -113,12 +113,30 @@ cargo test --test integration_tests
 
 ### 3. 打包发布应用
 ```bash
-# 构建 macOS .app 与 .dmg 安装包
-pnpm tauri build
-```
-编译产物将输出至 `src-tauri/target/release/bundle/dmg/DocTools_1.0.0.dmg`。
+# 一键打包 macOS 两种架构 (Apple Silicon + Intel)
+pnpm package:mac
 
-### 4. 访达右键快捷操作集成
+# 仅打包 macOS 苹果芯片 (M1/M2/M3/M4)
+pnpm package:mac-arm64
+
+# 仅打包 macOS Intel 芯片
+pnpm package:mac-intel
+
+# 打包 Windows NSIS 安装包 (.exe)
+pnpm package:windows
+```
+打包产物自动收集至 `dist-release/` 目录：
+- `dist-release/macos/my-tools-macos-arm64.dmg`（苹果芯片）
+- `dist-release/macos/my-tools-macos-intel.dmg`（Intel 芯片）
+- `dist-release/windows/my-tools-windows-x64-setup.exe`（Windows 安装程序）
+
+### 4. GitHub 自动更新 Release
+
+项目已配置 GitHub Actions 自动化发布工作流（`.github/workflows/release.yml`）：
+- **触发机制**：每次 push 到 `main` 分支或推送版本 tag（如 `v1.0.0`），GitHub 会自动并发构建并更新 Release。
+- **发布产物**：包含 macOS Apple Silicon DMG、macOS Intel DMG、Windows NSIS 安装程序及 `SHA256SUMS.txt` 校验和。
+
+### 5. 访达右键快捷操作集成
 启动应用后，进入侧边栏的 **「系统右键集成」** 面板，点击 **「一键安装访达右键快捷操作」**。
 安装后，在访达中右键点击任意 PDF、图片或 Word 文档，即可在系统菜单中看到：
 > **快捷操作 / 服务 -> DocTools: 合并与处理**
