@@ -1,3 +1,4 @@
+import { getPathBasename } from '../utils/format';
 import React, { useState, useEffect, useCallback } from 'react';
 import {
   Folder,
@@ -7,20 +8,21 @@ import {
   ChevronDown,
   Check,
   Search,
-  ExternalLink,
   Layers,
   RefreshCw,
   Maximize2,
   X,
   FileText,
-  AlertTriangle,
   MoveUp,
   MoveDown,
   Trash2,
+  Eye,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { DirContent, FileItem, MergeItem, OperationResult } from '../types';
 import { formatDate, formatFileSize, generateDefaultMergeOutputPath, getFileTypeBadge } from '../utils/format';
+import { OperationStatusBanner } from './common/OperationStatusBanner';
+import { DocumentPreviewModal } from './common/DocumentPreviewModal';
 
 interface EmbeddedMergeModalProps {
   initialDirectory: string;
@@ -54,6 +56,7 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
   const [isMerging, setIsMerging] = useState(false);
   const [mergeResult, setMergeResult] = useState<OperationResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
 
   // Load directory contents
   const loadDirectory = useCallback(async (path: string) => {
@@ -190,12 +193,16 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
 
   // Execute Merge
   const handleMerge = async () => {
-    if (mergeQueue.length === 0) {
-      setErrorMessage('请至少选择一个需要合并的文件');
+    if (mergeQueue.length < 2) {
+      setErrorMessage(
+        mergeQueue.length === 0
+          ? '请选择要合并的文件'
+          : '至少需要选择 2 个文件'
+      );
       return;
     }
     if (!outputFileName.trim()) {
-      setErrorMessage('请指定输出文件名');
+      setErrorMessage('请指定输出路径');
       return;
     }
 
@@ -203,15 +210,28 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
     setErrorMessage(null);
     setMergeResult(null);
 
+    const startTime = Date.now();
     try {
       const res = await api.mergeFiles({
         items: mergeQueue,
         output_path: outputFileName.trim(),
       });
-      setMergeResult(res);
-      // Reload directory to show merged PDF
-      loadDirectory(currentPath);
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 700) {
+        await new Promise((resolve) => setTimeout(resolve, 700 - elapsed));
+      }
+      if (res.success) {
+        setMergeResult(res);
+        // Reload directory to show merged PDF
+        loadDirectory(currentPath);
+      } else {
+        setErrorMessage(res.message || '合并失败');
+      }
     } catch (err: any) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 500) {
+        await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
+      }
       setErrorMessage(typeof err === 'string' ? err : err?.message || '合并失败');
     } finally {
       setIsMerging(false);
@@ -219,8 +239,7 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
   };
 
   // Breadcrumbs
-  const breadcrumbs = currentPath ? currentPath.split('/').filter(Boolean) : [];
-  const currentFolderName = breadcrumbs[breadcrumbs.length - 1] || '根目录';
+  const currentFolderName = getPathBasename(currentPath) || '根目录';
 
   // Filter root items
   const rootEntries = (dirContent?.entries || []).filter((item) => {
@@ -239,7 +258,7 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
           <button
             onClick={onClose}
             className="w-3.5 h-3.5 rounded-full bg-rose-500/80 hover:bg-rose-500 flex items-center justify-center text-slate-900 transition-colors"
-            title="关闭浮窗"
+            title="关闭"
           >
             <X className="w-2.5 h-2.5 opacity-0 hover:opacity-100" />
           </button>
@@ -247,7 +266,7 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
           <button
             onClick={onExpandToFullStudio}
             className="w-3.5 h-3.5 rounded-full bg-emerald-500/80 hover:bg-emerald-500 flex items-center justify-center text-slate-900 transition-colors"
-            title="切换到完整工作台"
+            title="完整模式"
           >
             <Maximize2 className="w-2.5 h-2.5 opacity-0 hover:opacity-100" />
           </button>
@@ -259,7 +278,7 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
             <button
               onClick={() => loadDirectory(dirContent.parent_path!)}
               className="p-1 rounded-lg border border-slate-700/80 hover:bg-slate-800 text-slate-300 transition-colors shrink-0"
-              title="返回上一级目录"
+              title="上一级"
             >
               <ArrowUp className="w-3.5 h-3.5" />
             </button>
@@ -280,7 +299,7 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
             className="px-2 py-1 text-[11px] rounded-lg border border-slate-700 hover:bg-slate-800 text-slate-300 transition-colors font-medium flex items-center space-x-1"
           >
             <Maximize2 className="w-3 h-3 text-indigo-400" />
-            <span>专业套件</span>
+            <span>完整模式</span>
           </button>
         </div>
       </div>
@@ -291,7 +310,7 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
           <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
           <input
             type="text"
-            placeholder="在当前目录与展开文件夹中筛选..."
+            placeholder="搜索文件..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="w-full pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-800 bg-slate-900/80 text-slate-200 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
@@ -308,7 +327,7 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
             }`}
           >
             <Layers className="w-3.5 h-3.5 text-indigo-400" />
-            <span>已选清单 ({mergeQueue.length})</span>
+            <span>待合并 ({mergeQueue.length})</span>
           </button>
         )}
       </div>
@@ -320,12 +339,12 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
           {isLoadingDir ? (
             <div className="h-48 flex flex-col items-center justify-center text-slate-400 text-xs">
               <RefreshCw className="w-5 h-5 animate-spin mb-2 text-indigo-400" />
-              <span>正在展开目录结构...</span>
+              <span>加载中...</span>
             </div>
           ) : rootEntries.length === 0 ? (
             <div className="h-48 flex flex-col items-center justify-center text-slate-500 text-xs">
               <Folder className="w-8 h-8 text-slate-700 mb-2 stroke-1" />
-              <span>此目录暂无可合并的文件</span>
+              <span>目录为空</span>
             </div>
           ) : (
             rootEntries.map((item) => (
@@ -340,13 +359,14 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
                   onToggleSelect={() => toggleFile(item)}
                   onToggleExpand={(e) => toggleFolderExpand(item.path, e)}
                   onEnterFolder={() => loadDirectory(item.path)}
+                  onPreview={!item.is_dir ? () => setPreviewPath(item.path) : undefined}
                 />
 
                 {/* Inline Expanded Child Directory Rows */}
                 {expandedFolders[item.path] && (
                   <div className="pl-4 border-l border-slate-800 ml-3 space-y-1 py-0.5">
                     {expandedFolders[item.path].length === 0 ? (
-                      <div className="text-[11px] text-slate-500 py-1 pl-4">（子文件夹为空）</div>
+                      <div className="text-[11px] text-slate-500 py-1 pl-4">（子目录为空）</div>
                     ) : (
                       expandedFolders[item.path].map((subItem) => (
                         <TreeItemRow
@@ -359,6 +379,7 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
                           onToggleSelect={() => toggleFile(subItem)}
                           onToggleExpand={(e) => toggleFolderExpand(subItem.path, e)}
                           onEnterFolder={() => loadDirectory(subItem.path)}
+                          onPreview={!subItem.is_dir ? () => setPreviewPath(subItem.path) : undefined}
                         />
                       ))
                     )}
@@ -373,7 +394,7 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
         {showOrderDrawer && (
           <div className="w-64 border-l border-slate-800 bg-slate-950/80 flex flex-col h-full animate-in slide-in-from-right duration-200">
             <div className="p-2.5 border-b border-slate-800 flex items-center justify-between text-xs font-semibold text-slate-200">
-              <span>合并顺序调整</span>
+              <span>文件排序</span>
               <button
                 onClick={() => setMergeQueue([])}
                 className="text-rose-400 hover:text-rose-300 text-[11px] flex items-center space-x-1"
@@ -400,9 +421,17 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
 
                   <div className="flex items-center space-x-0.5 shrink-0">
                     <button
+                      type="button"
+                      onClick={() => setPreviewPath(item.path)}
+                      className="p-1 text-slate-400 hover:text-indigo-400 cursor-pointer"
+                      title="预览"
+                    >
+                      <Eye className="w-3 h-3" />
+                    </button>
+                    <button
                       onClick={() => moveItem(idx, 'up')}
                       disabled={idx === 0}
-                      className="p-1 text-slate-400 hover:text-slate-200 disabled:opacity-20"
+                      className="p-1 text-slate-400 hover:text-slate-200 disabled:opacity-20 cursor-pointer"
                     >
                       <MoveUp className="w-3 h-3" />
                     </button>
@@ -431,7 +460,7 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
       <div className="p-3 border-t border-slate-800 bg-slate-950 space-y-2">
         {/* Output Path Display / Edit */}
         <div className="flex items-center justify-between text-[11px] text-slate-400">
-          <span className="shrink-0 font-medium mr-2">输出保存至:</span>
+          <span className="shrink-0 font-medium mr-2">输出路径:</span>
           <input
             type="text"
             value={outputFileName}
@@ -440,53 +469,65 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
           />
         </div>
 
-        {/* Error or Success notification */}
-        {errorMessage && (
-          <div className="p-2 rounded-lg bg-rose-950/60 border border-rose-800 text-rose-400 text-xs flex items-center space-x-2">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            <span className="truncate">{errorMessage}</span>
-          </div>
-        )}
-
-        {mergeResult && (
-          <div className="p-2 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300 text-xs flex items-center justify-between">
-            <div className="flex items-center space-x-2 min-w-0">
-              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span className="truncate">{mergeResult.message}</span>
-            </div>
-            {mergeResult.output_path && (
-              <button
-                onClick={() => api.revealInFinder(mergeResult.output_path!)}
-                className="ml-2 text-indigo-400 hover:underline flex items-center space-x-1 shrink-0 font-medium"
-              >
-                <span>在访达定位</span>
-                <ExternalLink className="w-3 h-3" />
-              </button>
-            )}
-          </div>
-        )}
+        {/* Loading & Status feedback */}
+        <OperationStatusBanner
+          status={
+            isMerging ? 'loading' : errorMessage ? 'error' : mergeResult ? 'success' : 'idle'
+          }
+          loadingLabel="正在合并..."
+          loadingSublabel="正在处理合并文件"
+          accentColor="indigo"
+          pixelVariant="Drive"
+          compact={true}
+          successTitle="合并成功"
+          successMessage={mergeResult?.message}
+          outputPath={mergeResult?.output_path}
+          errorTitle="合并失败"
+          errorMessage={errorMessage}
+          onRetry={handleMerge}
+          onPreview={setPreviewPath}
+          onDismiss={() => {
+            setErrorMessage(null);
+            setMergeResult(null);
+          }}
+        />
 
         {/* Action Button */}
         <button
+          type="button"
           onClick={handleMerge}
-          disabled={isMerging || mergeQueue.length === 0}
-          className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-40 text-white font-medium text-xs shadow-md shadow-indigo-600/30 flex items-center justify-center space-x-2 transition-all cursor-pointer disabled:cursor-not-allowed"
+          disabled={isMerging}
+          className={`w-full py-2.5 px-4 rounded-xl font-medium text-xs flex items-center justify-center space-x-2 transition-all ${
+            isMerging
+              ? 'bg-indigo-600 text-white cursor-wait opacity-90'
+              : mergeQueue.length < 2
+              ? 'bg-slate-800 text-slate-500 border border-slate-700/60 shadow-none cursor-not-allowed hover:bg-slate-750'
+              : 'bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white shadow-md shadow-indigo-600/30 cursor-pointer active:scale-[0.99]'
+          }`}
         >
           {isMerging ? (
             <>
               <RefreshCw className="w-4 h-4 animate-spin" />
-              <span>正在无缝合并中...</span>
+              <span>正在合并...</span>
             </>
           ) : (
             <>
               <FileText className="w-4 h-4" />
               <span>
-                ⚡ 立即合并已选文件 ({mergeQueue.length} 个文件)
+                {mergeQueue.length < 2
+                  ? '开始合并（需至少 2 个文件）'
+                  : `开始合并（${mergeQueue.length} 个文件）`}
               </span>
             </>
           )}
         </button>
       </div>
+
+      {/* Document Preview Modal */}
+      <DocumentPreviewModal
+        path={previewPath}
+        onClose={() => setPreviewPath(null)}
+      />
     </div>
   );
 };
@@ -501,6 +542,7 @@ interface TreeItemRowProps {
   onToggleSelect: () => void;
   onToggleExpand: (e: React.MouseEvent) => void;
   onEnterFolder: () => void;
+  onPreview?: () => void;
 }
 
 const TreeItemRow: React.FC<TreeItemRowProps> = ({
@@ -511,6 +553,7 @@ const TreeItemRow: React.FC<TreeItemRowProps> = ({
   onToggleSelect,
   onToggleExpand,
   onEnterFolder,
+  onPreview,
 }) => {
   const badge = getFileTypeBadge(item.extension);
 
@@ -525,7 +568,7 @@ const TreeItemRow: React.FC<TreeItemRowProps> = ({
           <button
             onClick={onToggleExpand}
             className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-slate-700 transition-colors shrink-0"
-            title={isExpanded ? '收起此目录' : '在此展开下级目录'}
+            title={isExpanded ? '收起' : '展开'}
           >
             {isLoadingSub ? (
               <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
@@ -543,7 +586,7 @@ const TreeItemRow: React.FC<TreeItemRowProps> = ({
         </div>
 
         <span className="text-[10px] text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity">
-          点击进入
+          进入
         </span>
       </div>
     );
@@ -579,14 +622,27 @@ const TreeItemRow: React.FC<TreeItemRowProps> = ({
         </div>
       </div>
 
-      <div className="shrink-0">
+      <div className="shrink-0 flex items-center space-x-1.5">
+        {onPreview && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onPreview();
+            }}
+            className="p-1 rounded text-slate-500 hover:text-indigo-400 hover:bg-slate-800 transition-colors cursor-pointer"
+            title="预览"
+          >
+            <Eye className="w-3.5 h-3.5" />
+          </button>
+        )}
         {isSelected ? (
           <span className="w-5 h-5 rounded-full bg-indigo-500 text-white flex items-center justify-center text-[10px]">
             <Check className="w-3 h-3" />
           </span>
         ) : (
           <span className="text-[11px] text-slate-500 hover:text-slate-300">
-            勾选
+            选择
           </span>
         )}
       </div>

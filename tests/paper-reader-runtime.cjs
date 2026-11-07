@@ -1,0 +1,67 @@
+const { app, BrowserWindow } = require('electron');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const output = process.env.PAPER_TEST_OUTPUT || '/tmp/doc-tools-paper-ui';
+fs.mkdirSync(output, { recursive: true });
+app.commandLine.appendSwitch('no-sandbox');
+app.commandLine.appendSwitch('disable-gpu');
+app.whenReady().then(async () => {
+  const win = new BrowserWindow({ width: 1440, height: 1000, show: false, webPreferences: { contextIsolation: true, sandbox: true } });
+  const errors = [];
+  win.webContents.on('console-message', event => { if (event.level === 'error') errors.push(event.message); });
+  const evaluate = code => win.webContents.executeJavaScript(code, true);
+  const wait = async (code, label) => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) { if (await evaluate(code)) return; await new Promise(resolve => setTimeout(resolve, 50)); }
+    throw new Error(`Timed out: ${label}`);
+  };
+  const click = label => evaluate(`Array.from(document.querySelectorAll('button')).find(b => b.textContent.trim() === ${JSON.stringify(label)})?.click()`);
+  try {
+    await win.loadURL((process.env.PAPER_TEST_URL || 'http://127.0.0.1:1420') + '/tests/paper-reader-harness.html');
+    await wait("document.querySelectorAll('.textLayer span').length > 0", 'PDF text');
+    await wait("window.readingState?.[4] === 2", 'PDF pages');
+    await click('目录');
+    await wait("document.body.textContent.includes('Introduction')", 'native outline');
+    await click('搜索');
+    await evaluate(`(() => { const input = document.querySelector('[aria-label="搜索论文正文"]'); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(input, 'Method'); input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+    await wait("document.querySelector('[aria-label=" + JSON.stringify('全文搜索') + "]')?.textContent.includes('个结果')", 'search');
+    assert(await evaluate("document.querySelector('[aria-label=" + JSON.stringify('全文搜索') + "]')?.textContent.includes('0 个结果') === false"));
+    await click('问AI');
+    await evaluate(`(() => { const input = document.querySelector('[aria-label="论文问题"]'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set.call(input,'总结'); input.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+    await evaluate("document.querySelector('[aria-label=发送问题]').click()");
+    await wait("document.body.textContent.includes('回答来自原文')", 'stream delta');
+    await evaluate('window.remountReader()');
+    await click('问AI');
+    await wait("document.body.textContent.includes('引用已核验')", 'verified evidence');
+    await click('存为批注');
+    await click('批注(1)');
+    await wait("document.body.textContent.includes('AI 问答')", 'saved QA');
+    await evaluate("document.querySelector('[title=删除]').click()");
+    await wait("document.body.textContent.includes('批注已删除')", 'undo notice');
+    await click('撤销');
+    await wait("document.body.textContent.includes('批注(1)')", 'restored QA');
+    fs.writeFileSync(output + '/pdf.png', (await win.webContents.capturePage()).toPNG());
+    await win.setSize(1024, 768);
+    fs.writeFileSync(output + '/compact.png', (await win.webContents.capturePage()).toPNG());
+    await win.setSize(1440, 1000);
+    await win.loadURL((process.env.PAPER_TEST_URL || 'http://127.0.0.1:1420') + '/tests/paper-reader-harness.html?word=1');
+    await wait("document.querySelectorAll('.docx-render-target table').length > 0", 'Word table');
+    await wait("document.querySelectorAll('.docx-render-target [data-page-no]').length > 1", 'Word paragraphs');
+    const spans = await evaluate("Array.from(document.querySelectorAll('.docx-render-target td')).map(td => ({col:td.colSpan,row:td.rowSpan}))");
+    assert(spans.some(span => span.col > 1 || span.row > 1), 'merged cells retained');
+    await evaluate(`(() => { const p = document.querySelector('.docx-render-target [data-page-no="2"]'); const range=document.createRange(); range.selectNodeContents(p); const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range); p.dispatchEvent(new MouseEvent('mouseup',{bubbles:true})); })()`);
+    await wait("document.body.textContent.includes('高亮')", 'Word selection');
+    await click('高亮');
+    await wait("document.body.textContent.includes('批注(1)')", 'Word annotation saved');
+    await evaluate('window.remountReader()');
+    await wait("document.querySelectorAll('.docx-render-target + div').length > 0", 'persistent Word highlight');
+    await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    fs.writeFileSync(output + '/word.png', (await win.webContents.capturePage()).toPNG());
+    await win.loadURL((process.env.PAPER_TEST_URL || 'http://127.0.0.1:1420') + '/tests/paper-reader-harness.html?library=1');
+    await wait("document.body.textContent.includes('资料库')", 'library');
+    fs.writeFileSync(output + '/library.png', (await win.webContents.capturePage()).toPNG());
+    assert.deepEqual(errors, []);
+    console.log(JSON.stringify({ ok: true, checks: ['PDF text and native outline','source search','streaming QA with verified evidence','annotation save/delete/undo','compact layout','DOCX merged tables and persistent highlights'], screenshots: output }));
+    app.exit(0);
+  } catch (error) { console.error(error); console.error(errors); fs.writeFileSync(output + '/failure.png', (await win.webContents.capturePage()).toPNG()); app.exit(1); }
+});

@@ -9,20 +9,35 @@ class FinderSync: FIFinderSync {
 
     override init() {
         super.init()
-        NSLog("[DocToolsFinderSync] Initialized and registering directory URLs")
-        let home = URL(fileURLWithPath: NSHomeDirectory())
-        let volumes = URL(fileURLWithPath: "/Volumes")
-        FIFinderSyncController.default().directoryURLs = [home, volumes]
+        NSLog("[DocToolsFinderSync] Initialized! Setting directoryURLs to root and Users")
+        FIFinderSyncController.default().directoryURLs = Set([
+            URL(fileURLWithPath: "/"),
+            URL(fileURLWithPath: "/Users"),
+            URL(fileURLWithPath: "/Volumes")
+        ])
     }
 
     override func menu(for menuKind: FIMenuKind) -> NSMenu? {
-        guard menuKind == .contextualMenuForItems else { return nil }
-        guard let selectedURLs = FIFinderSyncController.default().selectedItemURLs(), !selectedURLs.isEmpty else {
+        NSLog("[DocToolsFinderSync] menu(for:) called with menuKind: %ld", menuKind.rawValue)
+        guard menuKind == .contextualMenuForItems || menuKind == .contextualMenuForContainer else { return nil }
+        
+        let selectedURLs = FIFinderSyncController.default().selectedItemURLs() ?? []
+        let targetedURL = FIFinderSyncController.default().targetedURL()
+
+        let anchorURL: URL
+        let isContainerContext: Bool
+        if !selectedURLs.isEmpty {
+            anchorURL = selectedURLs[0]
+            isContainerContext = false
+        } else if let tURL = targetedURL {
+            anchorURL = tURL
+            isContainerContext = true
+        } else {
+            NSLog("[DocToolsFinderSync] Neither selectedItemURLs nor targetedURL available")
             return nil
         }
 
-        let firstURL = selectedURLs[0]
-        let anchorURL = firstURL
+        NSLog("[DocToolsFinderSync] anchorURL is: %@", anchorURL.path)
         let currentDirURL = entryIsDir(url: anchorURL) ? anchorURL : anchorURL.deletingLastPathComponent()
         let parentDirURL = currentDirURL.deletingLastPathComponent()
 
@@ -44,8 +59,11 @@ class FinderSync: FIFinderSync {
             rootSubmenu.addItem(NSMenuItem.separator())
         }
 
-        // Header: Current Anchor File
-        let header = NSMenuItem(title: "📄 点选文件: \(anchorURL.lastPathComponent)", action: nil, keyEquivalent: "")
+        // Header: Current Context
+        let headerTitle = isContainerContext 
+            ? "📁 当前文件夹: \(anchorURL.lastPathComponent)"
+            : "📄 点选文件: \(anchorURL.lastPathComponent)"
+        let header = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
         header.isEnabled = false
         rootSubmenu.addItem(header)
         rootSubmenu.addItem(NSMenuItem.separator())
@@ -257,8 +275,20 @@ class FinderSync: FIFinderSync {
     }
 
     func executeCliMerge(paths: [String]) {
+        let binPath = "/Applications/DocTools.app/Contents/MacOS/doc-tools"
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binPath)
+        process.arguments = ["cli-merge"] + paths
+        do {
+            try process.run()
+            return
+        } catch {
+            NSLog("[DocToolsFinderSync] Process run failed: %@, fallback to NSWorkspace", error.localizedDescription)
+        }
+
         let appURL = URL(fileURLWithPath: "/Applications/DocTools.app")
         let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
         config.arguments = ["cli-merge"] + paths
         config.activates = false
         NSWorkspace.shared.openApplication(at: appURL, configuration: config, completionHandler: nil)

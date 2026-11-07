@@ -1,18 +1,20 @@
+import { getPathBasename } from '../utils/format';
 import React, { useState, useEffect } from 'react';
 import {
   Minimize2,
   FileText,
   Upload,
   CheckCircle2,
-  AlertTriangle,
   RefreshCw,
-  ExternalLink,
   Sliders,
   Zap,
+  Eye,
 } from 'lucide-react';
 import { api } from '../services/api';
 import { CompressResult, IntegrationStatus } from '../types';
 import { formatFileSize, generateDefaultOutputPath } from '../utils/format';
+import { OperationStatusBanner } from './common/OperationStatusBanner';
+import { DocumentPreviewModal } from './common/DocumentPreviewModal';
 
 interface CompressViewProps {
   initialFile?: string;
@@ -37,6 +39,7 @@ export const CompressView: React.FC<CompressViewProps> = ({
   const [isCompressing, setIsCompressing] = useState(false);
   const [result, setResult] = useState<CompressResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
 
   // When initialFile changes or is set
   useEffect(() => {
@@ -87,6 +90,7 @@ export const CompressView: React.FC<CompressViewProps> = ({
     setErrorMessage(null);
     setResult(null);
 
+    const startTime = Date.now();
     try {
       const res = await api.compressPdf({
         input_path: inputPath.trim(),
@@ -96,8 +100,22 @@ export const CompressView: React.FC<CompressViewProps> = ({
         strip_metadata: stripMetadata,
         use_advanced_engine: useAdvancedEngine && (integrationStatus?.ghostscript_available ?? false),
       });
-      setResult(res);
+
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 700) {
+        await new Promise((resolve) => setTimeout(resolve, 700 - elapsed));
+      }
+
+      if (res.success) {
+        setResult(res);
+      } else {
+        setErrorMessage(res.message || '压缩失败');
+      }
     } catch (err: any) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 500) {
+        await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
+      }
       setErrorMessage(typeof err === 'string' ? err : err?.message || '压缩失败');
     } finally {
       setIsCompressing(false);
@@ -111,10 +129,10 @@ export const CompressView: React.FC<CompressViewProps> = ({
         <div>
           <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
             <Minimize2 className="w-5 h-5 text-emerald-500" />
-            <span>PDF 智能压缩</span>
+            <span>PDF 压缩</span>
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            采用智能图像重采样与流压缩技术，在保留最佳视觉清晰度的同时大幅降低 PDF 文件体积
+            在保留清晰度的同时减小 PDF 文件体积
           </p>
         </div>
 
@@ -132,26 +150,37 @@ export const CompressView: React.FC<CompressViewProps> = ({
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
-                    {inputPath.split('/').pop() || inputPath}
+                    {getPathBasename(inputPath) || inputPath}
                   </div>
                   <div className="text-[11px] text-slate-400 font-mono truncate">{inputPath}</div>
                 </div>
               </div>
-              {inputSize !== null && (
-                <div className="text-right shrink-0">
-                  <div className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    {formatFileSize(inputSize)}
+              <div className="flex items-center space-x-3 shrink-0">
+                {inputSize !== null && (
+                  <div className="text-right">
+                    <div className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                      {formatFileSize(inputSize)}
+                    </div>
+                    <div className="text-[10px] text-slate-400">原文件大小</div>
                   </div>
-                  <div className="text-[10px] text-slate-400">原始体积</div>
-                </div>
-              )}
+                )}
+                <button
+                  type="button"
+                  onClick={() => setPreviewPath(inputPath)}
+                  className="flex items-center space-x-1 px-2.5 py-1.5 rounded-lg border border-emerald-300/80 dark:border-emerald-700/80 bg-white/80 dark:bg-slate-800/80 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-medium text-xs transition-colors cursor-pointer"
+                  title="预览原文件"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  <span>预览原文件</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl p-6 text-center text-xs text-slate-400 space-y-2">
               <Upload className="w-8 h-8 text-slate-300 dark:text-slate-600 mx-auto stroke-1" />
               <div>
-                <span className="font-medium text-slate-600 dark:text-slate-400">点击下方输入框粘贴路径</span>
-                <span className="block text-[11px] text-slate-400 mt-0.5">或通过访达右键点击 PDF 直接唤起</span>
+                <span className="font-medium text-slate-600 dark:text-slate-400">输入或粘贴 PDF 文件路径</span>
+                <span className="block text-[11px] text-slate-400 mt-0.5">支持拖拽或系统右键直接打开</span>
               </div>
             </div>
           )}
@@ -161,7 +190,7 @@ export const CompressView: React.FC<CompressViewProps> = ({
               type="text"
               value={inputPath}
               onChange={(e) => handleSelectFile(e.target.value)}
-              placeholder="输入或粘贴文件绝对路径，例如 /Users/jzefan/sample.pdf"
+              placeholder="输入或粘贴 PDF 文件路径"
               className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-1 focus:ring-emerald-500 font-mono"
             />
           </div>
@@ -173,7 +202,7 @@ export const CompressView: React.FC<CompressViewProps> = ({
             <label className="text-xs font-semibold text-slate-700 dark:text-slate-300">
               压缩等级预设
             </label>
-            <span className="text-[11px] text-slate-400">推荐平衡画质与体积</span>
+            <span className="text-[11px] text-slate-400">推荐平衡清晰度与体积</span>
           </div>
 
           <div className="grid grid-cols-3 gap-3">
@@ -187,13 +216,13 @@ export const CompressView: React.FC<CompressViewProps> = ({
               }`}
             >
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">推荐压缩</span>
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">标准压缩</span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 dark:text-emerald-400 font-medium">
                   150 DPI
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                保留最佳清晰度，适合日常办公、阅读与邮件附件
+                保留良好清晰度，适合日常阅读与传阅
               </p>
             </button>
 
@@ -207,13 +236,13 @@ export const CompressView: React.FC<CompressViewProps> = ({
               }`}
             >
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">便携高压缩</span>
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200">深度压缩</span>
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/60 text-blue-600 dark:text-blue-400 font-medium">
                   96 DPI
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                大幅缩小体积，适合网页浏览、手机端阅读与限制上传
+                大幅缩小体积，适合移动端与邮件限制
               </p>
             </button>
 
@@ -233,7 +262,7 @@ export const CompressView: React.FC<CompressViewProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-tight">
-                最大限度缩减字节，仅供预览或存档节省磁盘空间
+                最大限度缩减体积，适合归档与节省空间
               </p>
             </button>
           </div>
@@ -242,10 +271,10 @@ export const CompressView: React.FC<CompressViewProps> = ({
           <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80">
             <button
               onClick={() => selectPreset('custom')}
-              className="text-xs font-medium text-slate-600 dark:text-slate-400 flex items-center space-x-1.5 hover:text-emerald-600"
+              className="text-xs font-medium text-slate-600 dark:text-slate-400 flex items-center space-x-1.5 hover:text-emerald-600 cursor-pointer"
             >
               <Sliders className="w-3.5 h-3.5" />
-              <span>{preset === 'custom' ? '自定义压缩参数 (已激活)' : '展开自定义参数调节'}</span>
+              <span>{preset === 'custom' ? '收起自定义参数' : '展开自定义参数'}</span>
             </button>
 
             {preset === 'custom' && (
@@ -269,7 +298,7 @@ export const CompressView: React.FC<CompressViewProps> = ({
 
                   <div>
                     <div className="flex justify-between text-xs font-medium text-slate-700 dark:text-slate-300 mb-1">
-                      <span>JPEG 画质因子:</span>
+                      <span>图片质量:</span>
                       <span className="font-bold text-emerald-600">{quality}%</span>
                     </div>
                     <input
@@ -292,7 +321,7 @@ export const CompressView: React.FC<CompressViewProps> = ({
                       onChange={(e) => setStripMetadata(e.target.checked)}
                       className="rounded text-emerald-600 focus:ring-emerald-500"
                     />
-                    <span>清除冗余元数据与缩略图</span>
+                    <span>移除元数据与缩略图</span>
                   </label>
 
                   <label className="flex items-center space-x-2 cursor-pointer">
@@ -302,7 +331,7 @@ export const CompressView: React.FC<CompressViewProps> = ({
                       onChange={(e) => setUseAdvancedEngine(e.target.checked)}
                       className="rounded text-emerald-600 focus:ring-emerald-500"
                     />
-                    <span>优先使用 Ghostscript 专业引擎</span>
+                    <span>优先使用 Ghostscript 引擎</span>
                   </label>
                 </div>
               </div>
@@ -313,7 +342,7 @@ export const CompressView: React.FC<CompressViewProps> = ({
         {/* Output Setting */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-3">
           <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-            压缩后输出目标路径
+            输出保存路径
           </label>
           <input
             type="text"
@@ -324,24 +353,38 @@ export const CompressView: React.FC<CompressViewProps> = ({
           />
         </div>
 
-        {/* Error Notification */}
-        {errorMessage && (
-          <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-rose-600 dark:text-rose-400 text-xs flex items-center space-x-2">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            <span>{errorMessage}</span>
-          </div>
-        )}
+        {/* Loading & Status feedback */}
+        <OperationStatusBanner
+          status={
+            isCompressing ? 'loading' : errorMessage ? 'error' : result ? 'success' : 'idle'
+          }
+          loadingLabel="正在压缩 PDF..."
+          loadingSublabel="正在优化图像分辨率与数据流"
+          accentColor="emerald"
+          pixelVariant="Drive"
+          successTitle={`压缩完成，体积缩减 ${result?.reduction_percent.toFixed(1)}%`}
+          successMessage={result?.message || '文档已保存'}
+          outputPath={result?.output_path}
+          errorTitle="压缩失败"
+          errorMessage={errorMessage}
+          onRetry={handleCompress}
+          onPreview={setPreviewPath}
+          onDismiss={() => {
+            setErrorMessage(null);
+            setResult(null);
+          }}
+        />
 
-        {/* Compression Result Card */}
+        {/* Compression Statistics Breakdown Card */}
         {result && (
-          <div className="bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border border-emerald-500/30 rounded-2xl p-5 space-y-4">
+          <div className="bg-gradient-to-br from-emerald-500/10 to-teal-500/10 border border-emerald-500/30 rounded-2xl p-5 space-y-4 animate-pop-in">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2 text-emerald-700 dark:text-emerald-300 font-semibold text-sm">
                 <CheckCircle2 className="w-5 h-5 text-emerald-500" />
-                <span>压缩成功！</span>
+                <span>压缩结果</span>
               </div>
               <span className="px-2.5 py-1 rounded-full bg-emerald-500 text-white font-bold text-xs shadow-xs">
-                缩减了 {result.reduction_percent.toFixed(1)}%
+                缩减 {result.reduction_percent.toFixed(1)}%
               </span>
             </div>
 
@@ -366,13 +409,15 @@ export const CompressView: React.FC<CompressViewProps> = ({
               </div>
             </div>
 
-            <div className="flex justify-end space-x-2">
+            <div className="pt-2 border-t border-emerald-200/50 dark:border-emerald-800/50 flex items-center justify-between">
+              <span className="text-[11px] text-slate-500 font-mono truncate mr-2">{result.output_path}</span>
               <button
-                onClick={() => api.revealInFinder(result.output_path)}
-                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs flex items-center space-x-1.5 shadow-2xs"
+                type="button"
+                onClick={() => setPreviewPath(result.output_path)}
+                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-medium text-xs shadow-2xs transition-colors shrink-0 cursor-pointer"
               >
-                <span>在访达定位</span>
-                <ExternalLink className="w-3.5 h-3.5" />
+                <Eye className="w-3.5 h-3.5" />
+                <span>预览文件</span>
               </button>
             </div>
           </div>
@@ -387,16 +432,22 @@ export const CompressView: React.FC<CompressViewProps> = ({
           {isCompressing ? (
             <>
               <RefreshCw className="w-4 h-4 animate-spin" />
-              <span>正在高效压缩中...</span>
+              <span>正在压缩...</span>
             </>
           ) : (
             <>
               <Zap className="w-4 h-4" />
-              <span>开始压缩 PDF</span>
+              <span>开始压缩</span>
             </>
           )}
         </button>
       </div>
+
+      {/* Document Preview Modal */}
+      <DocumentPreviewModal
+        path={previewPath}
+        onClose={() => setPreviewPath(null)}
+      />
     </div>
   );
 };

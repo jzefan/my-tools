@@ -2,7 +2,12 @@
 
 一款基于 **Tauri 2.0 (Rust) + React 19 + TypeScript + Tailwind CSS** 打造的极轻量、高性能跨平台桌面文档工具。
 
-针对 macOS 深度优化原生体验（支持访达 Finder 右键快捷操作直达），同时完整支持未来无缝扩展构建至 Windows。
+工具箱现包含网盘搜索与自媒体账号一键转发分发模块：
+- **自媒体分发**：支持抖音、小红书、B站、视频号、快手、知乎、微信公众号、今日头条、百家号、微博及自定义平台的多账号登录态隔离管理、图文与短视频一键分发、隐式静默发布与显示交互预填、发布任务队列中心、常用话术库、关键词自动回复与视频画幅/AI 文案辅助工具。启动命令 `pnpm app:media`，开发预览 `pnpm dev:media`。
+- **网盘搜索**：支持百度、阿里、夸克、123、115、迅雷、天翼、UC、移动、蓝奏、PikPak 和光鸭分享链接，提供多源搜索、去重、收藏、历史、提取码复制和自定义 PanSou 服务。启动命令 `pnpm app:netdisk`，开发预览 `pnpm dev:netdisk`。[网盘搜索配置与验证](docs/netdisk-search.md)。
+- **全功能工作台**：启动全部模块使用 `pnpm app`。
+
+针对 macOS 深度优化原生体验（支持访达 Finder 右键快捷操作直达），提供 Windows 构建配置；Windows 功能与安装验收仍需在 Windows 设备完成。
 
 ---
 
@@ -122,7 +127,20 @@ pnpm tauri build
 
 ---
 
-## 🪟 Windows 平台扩展说明
-当您未来在 Windows 设备上克隆或编译本项目时：
-1. 直接运行 `pnpm tauri build` 即可生成 Windows `.msi` 或 `.exe` 安装程序。
-2. 在应用内「系统右键集成」面板中点击「生成 Windows .reg 注册表代码」，双击即可自动将右键菜单注册到 Windows 10/11 文件资源管理器！
+## 🪟 Windows 构建与验收
+
+在 Windows 10/11 x64 上安装 Node.js 22、pnpm、Rust MSVC 工具链及 Visual Studio C++ Build Tools 后执行：
+
+```powershell
+pnpm install --frozen-lockfile
+cargo test --locked --manifest-path src-tauri/Cargo.toml --lib --tests
+pnpm tauri build --bundles nsis
+```
+
+安装程序输出到 `src-tauri/target/release/bundle/nsis/`。Windows 配置会嵌入 WebView2 离线安装程序；构建机器需要网络下载运行时，安装机器不依赖在线下载。配置依据 [Tauri Windows Installer 文档](https://v2.tauri.app/distribute/windows-installer/)。各套件开发入口 `pnpm app:docs`、`pnpm app:paper`、`pnpm app:cleaner` 使用独立 JSON 配置，可在 Windows 命令行运行。
+
+原生文件/文件夹选择、文件定位和默认应用打开已接入跨平台插件。Finder 快捷操作仅出现在 macOS；Windows 可在系统集成页查看基于实际安装路径生成的 `.reg` 配置，复制后以 UTF-16 LE 编码保存再手动导入。Windows 11 的传统菜单可能位于“显示更多选项”。菜单按单个文件启动应用，不承诺资源管理器多选合并为同一个会话。
+
+Word/PDF 转换需要可用的外部转换引擎；Windows 不具备 macOS 的 textutil、Quick Look 或磁盘清理规则。`.doc` 阅读需先通过 Word/LibreOffice 转换，不是原生 DOCX 渲染。Ghostscript、LibreOffice、Python 及其扩展均未随安装包附带。
+
+[Windows 验收清单](docs/windows-acceptance.md) 与 `.github/workflows/windows.yml` 覆盖构建和回归入口。当前修改仅在 macOS 主机编译及测试，未完成 Windows 安装包或设备验收。

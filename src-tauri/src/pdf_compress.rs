@@ -1,7 +1,8 @@
 use crate::models::{CompressRequest, CompressResult};
+use crate::pdf_convert::{get_gs_cmd, BoundedCommand};
+use image::DynamicImage;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use image::DynamicImage;
 use lopdf::{Document, Object};
 use std::fs;
 use std::path::Path;
@@ -13,9 +14,7 @@ pub fn compress_pdf(request: CompressRequest) -> Result<CompressResult, String> 
         return Err(format!("输入文件不存在: {}", request.input_path));
     }
 
-    let original_size = fs::metadata(input_path)
-        .map_err(|e| e.to_string())?
-        .len();
+    let original_size = fs::metadata(input_path).map_err(|e| e.to_string())?.len();
 
     let output_path = Path::new(&request.output_path);
     if let Some(parent) = output_path.parent() {
@@ -23,7 +22,7 @@ pub fn compress_pdf(request: CompressRequest) -> Result<CompressResult, String> 
     }
 
     // Try Ghostscript if requested and available
-    let gs_available = check_ghostscript_available();
+    let gs_available = request.use_advanced_engine && check_ghostscript_available();
     let use_gs = request.use_advanced_engine && gs_available;
 
     let res = if use_gs {
@@ -34,20 +33,22 @@ pub fn compress_pdf(request: CompressRequest) -> Result<CompressResult, String> 
 
     match res {
         Ok(_) => {
-            let compressed_size = fs::metadata(output_path)
-                .map_err(|e| e.to_string())?
-                .len();
+            let compressed_size = fs::metadata(output_path).map_err(|e| e.to_string())?.len();
 
             let reduction_percent = if original_size > 0 {
                 let diff = original_size as f64 - compressed_size as f64;
-                ((diff / original_size as f64) * 100.0).max(0.0)
+                (diff / original_size as f64) * 100.0
             } else {
                 0.0
             };
 
-            let engine_name = if use_gs { "Ghostscript 专业引擎" } else { "DocTools 原生引擎" };
+            let engine_name = if use_gs {
+                "Ghostscript 专业引擎"
+            } else {
+                "DocTools 原生引擎"
+            };
             let message = format!(
-                "压缩完成（{}）！体积由 {} 减少至 {}，缩减了 {:.1}%",
+                "压缩完成（{}）！体积 {} → {}，缩减率 {:.1}%",
                 engine_name,
                 format_file_size(original_size),
                 format_file_size(compressed_size),
@@ -68,12 +69,11 @@ pub fn compress_pdf(request: CompressRequest) -> Result<CompressResult, String> 
             if use_gs {
                 match compress_native(&request) {
                     Ok(_) => {
-                        let compressed_size = fs::metadata(output_path)
-                            .map_err(|e| e.to_string())?
-                            .len();
+                        let compressed_size =
+                            fs::metadata(output_path).map_err(|e| e.to_string())?.len();
                         let reduction_percent = if original_size > 0 {
                             let diff = original_size as f64 - compressed_size as f64;
-                            ((diff / original_size as f64) * 100.0).max(0.0)
+                            (diff / original_size as f64) * 100.0
                         } else {
                             0.0
                         };
@@ -84,14 +84,16 @@ pub fn compress_pdf(request: CompressRequest) -> Result<CompressResult, String> 
                             reduction_percent,
                             output_path: request.output_path,
                             message: format!(
-                                "原生引擎压缩完成！体积由 {} 减少至 {}，缩减了 {:.1}%",
+                                "原生引擎压缩完成！体积 {} → {}，缩减率 {:.1}%",
                                 format_file_size(original_size),
                                 format_file_size(compressed_size),
                                 reduction_percent
                             ),
                         })
                     }
-                    Err(native_err) => Err(format!("压缩失败: {}; 原生回退也失败: {}", e, native_err)),
+                    Err(native_err) => {
+                        Err(format!("压缩失败: {}; 原生回退也失败: {}", e, native_err))
+                    }
                 }
             } else {
                 Err(format!("压缩失败: {}", e))
@@ -101,52 +103,16 @@ pub fn compress_pdf(request: CompressRequest) -> Result<CompressResult, String> 
 }
 
 pub fn check_ghostscript_available() -> bool {
-    let candidates = [
-        "/opt/homebrew/bin/gs",
-        "/usr/local/bin/gs",
-        "/usr/bin/gs",
-        "gs",
-        "gswin64c.exe",
-        "gswin32c.exe",
-    ];
-
-    for c in candidates {
-        if let Ok(output) = Command::new(c).arg("--version").output() {
-            if output.status.success() {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn get_ghostscript_cmd() -> Option<String> {
-    let candidates = [
-        "/opt/homebrew/bin/gs",
-        "/usr/local/bin/gs",
-        "/usr/bin/gs",
-        "gs",
-        "gswin64c.exe",
-        "gswin32c.exe",
-    ];
-
-    for c in candidates {
-        if let Ok(output) = Command::new(c).arg("--version").output() {
-            if output.status.success() {
-                return Some(c.to_string());
-            }
-        }
-    }
-    None
+    get_gs_cmd().is_some()
 }
 
 fn compress_with_ghostscript(request: &CompressRequest) -> Result<(), String> {
-    let gs = get_ghostscript_cmd().ok_or_else(|| "未找到 Ghostscript".to_string())?;
+    let gs = get_gs_cmd().ok_or_else(|| "未找到 Ghostscript".to_string())?;
 
     let pdf_setting = match request.max_dpi {
-        0..=90 => "/screen",      // ~72 DPI
-        91..=180 => "/ebook",     // ~150 DPI
-        181..=250 => "/printer",  // ~300 DPI
+        0..=90 => "/screen",     // ~72 DPI
+        91..=180 => "/ebook",    // ~150 DPI
+        181..=250 => "/printer", // ~300 DPI
         _ => "/prepress",
     };
 
@@ -167,7 +133,7 @@ fn compress_with_ghostscript(request: &CompressRequest) -> Result<(), String> {
             &format!("-sOutputFile={}", request.output_path),
             &request.input_path,
         ])
-        .output()
+        .bounded_output()
         .map_err(|e| format!("执行 Ghostscript 失败: {}", e))?;
 
     if status.status.success() {
@@ -179,8 +145,8 @@ fn compress_with_ghostscript(request: &CompressRequest) -> Result<(), String> {
 }
 
 pub fn compress_native(request: &CompressRequest) -> Result<(), String> {
-    let mut doc = Document::load(&request.input_path)
-        .map_err(|e| format!("无法加载 PDF 文档: {}", e))?;
+    let mut doc =
+        Document::load(&request.input_path).map_err(|e| format!("无法加载 PDF 文档: {}", e))?;
 
     // Determine target max dimension from DPI
     let max_dim = match request.max_dpi {
@@ -195,29 +161,59 @@ pub fn compress_native(request: &CompressRequest) -> Result<(), String> {
 
     for id in object_ids {
         if let Some(Object::Stream(stream)) = doc.objects.get_mut(&id) {
-            let is_image = stream.dict.get(b"Subtype").ok().and_then(|obj| {
-                if let Object::Name(name) = obj {
-                    Some(name.as_slice() == b"Image")
-                } else {
-                    None
-                }
-            }).unwrap_or(false);
+            let is_image = stream
+                .dict
+                .get(b"Subtype")
+                .ok()
+                .and_then(|obj| {
+                    if let Object::Name(name) = obj {
+                        Some(name.as_slice() == b"Image")
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false);
 
-            if is_image {
+            let supported = stream
+                .dict
+                .get(b"BitsPerComponent")
+                .and_then(Object::as_i64)
+                .ok()
+                == Some(8)
+                && matches!(
+                    stream
+                        .dict
+                        .get(b"ColorSpace")
+                        .and_then(Object::as_name)
+                        .ok(),
+                    Some(b"DeviceRGB") | Some(b"DeviceGray")
+                )
+                && !stream.dict.has(b"SMask")
+                && !stream.dict.has(b"Mask")
+                && !stream.dict.has(b"Decode");
+            if is_image && supported {
                 // Try decompressing image stream content
                 if let Ok(decompressed) = stream.decompressed_content() {
                     let width = stream.dict.get(b"Width").ok().and_then(|w| {
-                        if let Object::Integer(v) = w { Some(*v as u32) } else { None }
+                        if let Object::Integer(v) = w {
+                            Some(*v as u32)
+                        } else {
+                            None
+                        }
                     });
                     let height = stream.dict.get(b"Height").ok().and_then(|h| {
-                        if let Object::Integer(v) = h { Some(*v as u32) } else { None }
+                        if let Object::Integer(v) = h {
+                            Some(*v as u32)
+                        } else {
+                            None
+                        }
                     });
 
                     let decoded_img = if let (Some(w), Some(h)) = (width, height) {
-                        if decompressed.len() == (w * h * 3) as usize {
+                        if decompressed.len() == (u64::from(w) * u64::from(h) * 3) as usize {
                             image::RgbImage::from_raw(w, h, decompressed)
                                 .map(DynamicImage::ImageRgb8)
-                        } else if decompressed.len() == (w * h) as usize {
+                        } else if decompressed.len() == (u64::from(w) * u64::from(h)) as usize {
                             image::GrayImage::from_raw(w, h, decompressed)
                                 .map(DynamicImage::ImageLuma8)
                         } else {
@@ -230,7 +226,8 @@ pub fn compress_native(request: &CompressRequest) -> Result<(), String> {
                     if let Some(img) = decoded_img {
                         let (cur_w, cur_h) = (img.width(), img.height());
                         let target_img = if cur_w > max_dim || cur_h > max_dim {
-                            let ratio = (max_dim as f32 / cur_w as f32).min(max_dim as f32 / cur_h as f32);
+                            let ratio =
+                                (max_dim as f32 / cur_w as f32).min(max_dim as f32 / cur_h as f32);
                             let new_w = ((cur_w as f32 * ratio) as u32).max(1);
                             let new_h = ((cur_h as f32 * ratio) as u32).max(1);
                             img.resize(new_w, new_h, FilterType::Triangle)
@@ -240,15 +237,34 @@ pub fn compress_native(request: &CompressRequest) -> Result<(), String> {
 
                         // Encode as JPEG with target quality
                         let mut jpeg_buf = Vec::new();
-                        let mut encoder = JpegEncoder::new_with_quality(&mut jpeg_buf, request.quality);
-                        let encode_res = encoder.encode_image(&target_img);
+                        let mut encoder =
+                            JpegEncoder::new_with_quality(&mut jpeg_buf, request.quality);
+                        let encode_res = encoder.encode(target_img.as_bytes(), target_img.width(), target_img.height(), target_img.color().into());
 
-                        if encode_res.is_ok() && !jpeg_buf.is_empty() {
+                        if encode_res.is_ok()
+                            && !jpeg_buf.is_empty()
+                            && jpeg_buf.len() < stream.content.len()
+                        {
                             stream.content = jpeg_buf;
-                            stream.dict.set("Width", Object::Integer(target_img.width() as i64));
-                            stream.dict.set("Height", Object::Integer(target_img.height() as i64));
-                            stream.dict.set("Filter", Object::Name(b"DCTDecode".to_vec()));
-                            stream.dict.set("ColorSpace", Object::Name(b"DeviceRGB".to_vec()));
+                            stream
+                                .dict
+                                .set("Width", Object::Integer(target_img.width() as i64));
+                            stream
+                                .dict
+                                .set("Height", Object::Integer(target_img.height() as i64));
+                            stream
+                                .dict
+                                .set("Filter", Object::Name(b"DCTDecode".to_vec()));
+                            stream.dict.set(
+                                "ColorSpace",
+                                Object::Name(if target_img.color().channel_count() == 1 {
+                                    b"DeviceGray".to_vec()
+                                } else {
+                                    b"DeviceRGB".to_vec()
+                                }),
+                            );
+                            stream.dict.remove(b"DecodeParms");
+                            stream.dict.remove(b"Decode");
                             stream.dict.set("BitsPerComponent", Object::Integer(8));
                         }
                     }

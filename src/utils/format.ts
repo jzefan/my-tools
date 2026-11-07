@@ -1,9 +1,47 @@
+export function getPathBasename(path: string): string {
+  const trimmed = path.replace(/[\\/]+$/, '');
+  return trimmed.slice(Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\')) + 1);
+}
+
+export function pathWithoutExtension(path: string): string {
+  const basenameStart = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1;
+  const dot = path.lastIndexOf('.');
+  return dot > basenameStart ? path.slice(0, dot) : path;
+}
+
+export function getPathBreadcrumbs(path: string): { name: string; path: string }[] {
+  if (!path) return [];
+  const normalized = path.replace(/\\/g, '/');
+  const windows = /^[a-z]:\//i.test(normalized) || normalized.startsWith('//');
+  const separator = windows ? '\\' : '/';
+  const rootMatch = normalized.match(/^(\/\/\?\/UNC\/[^/]+\/[^/]+|\/\/\?\/[a-z]:|\/\/[^/]+\/[^/]+|[a-z]:)(?:\/|$)/i);
+  const root = rootMatch ? rootMatch[1].replace(/\//g, separator) + separator : normalized.startsWith('/') ? '/' : '';
+  const rest = rootMatch ? normalized.slice(rootMatch[0].length) : normalized.replace(/^\/+/, '');
+  const crumbs: { name: string; path: string }[] = rootMatch ? [{ name: root.replace(/[\\/]+$/, ''), path: root }] : [];
+  let current = root;
+  for (const name of rest.split('/').filter(Boolean)) {
+    current += (current && !current.endsWith(separator) ? separator : '') + name;
+    crumbs.push({ name, path: current });
+  }
+  return crumbs;
+}
+
 export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '0 B';
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(sizes.length - 1, Math.floor(Math.log(bytes) / Math.log(k)));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+/** macOS「系统设置 › 储存空间」按十进制显示磁盘容量：1 GB = 1000³ 字节。 */
+export function formatDiskSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const step = 1000;
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(step)));
+  const value = bytes / step ** index;
+  return `${index === 0 ? value.toFixed(0) : value.toFixed(2)} ${units[index]}`;
 }
 
 export function formatDate(timestamp: number): string {
@@ -28,17 +66,26 @@ export function generateDefaultMergeOutputPath(dir: string): string {
 }
 
 export function generateDefaultOutputPath(inputPath: string, suffix: string): string {
-  const dotIndex = inputPath.lastIndexOf('.');
-  if (dotIndex === -1) return `${inputPath}_${suffix}.pdf`;
-  const base = inputPath.substring(0, dotIndex);
+  const base = pathWithoutExtension(inputPath);
   return `${base}_${suffix}.pdf`;
 }
 
 export function generateDefaultConvertOutputPath(inputPath: string, targetExt: 'docx' | 'pdf'): string {
-  const dotIndex = inputPath.lastIndexOf('.');
-  if (dotIndex === -1) return `${inputPath}_converted.${targetExt}`;
-  const base = inputPath.substring(0, dotIndex);
+  const base = pathWithoutExtension(inputPath);
   return `${base}_converted.${targetExt}`;
+}
+
+export function generateDefaultInsertOutputPath(targetPdfPath: string): string {
+  const base = pathWithoutExtension(targetPdfPath);
+  const now = new Date();
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+  return `${base}_已插入_${timestamp}.pdf`;
+}
+
+export function generateDefaultPdfToImageDir(pdfPath: string): string {
+  const base = pathWithoutExtension(pdfPath);
+  return base === pdfPath ? `${pdfPath}_images` : base;
 }
 
 export function getFileTypeBadge(extension: string): { label: string; color: string } {

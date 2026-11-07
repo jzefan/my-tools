@@ -1,0 +1,6 @@
+{
+  "build": {
+    "beforeDevCommand": "pnpm dev:media",
+    "beforeBuildCommand": "pnpm build:media"
+  }
+}

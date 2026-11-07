@@ -1,0 +1,6 @@
+{
+  "build": {
+    "beforeDevCommand": "pnpm dev:netdisk",
+    "beforeBuildCommand": "pnpm build:netdisk"
+  }
+}

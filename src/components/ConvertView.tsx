@@ -1,3 +1,4 @@
+import { getPathBasename } from '../utils/format';
 import React, { useState, useEffect } from 'react';
 import {
   ArrowLeftRight,
@@ -14,6 +15,7 @@ import {
   FileType,
   Eye,
   Cpu,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { api } from '../services/api';
 import {
@@ -24,8 +26,11 @@ import {
 import {
   formatFileSize,
   generateDefaultConvertOutputPath,
+  generateDefaultPdfToImageDir,
   getFileTypeBadge,
 } from '../utils/format';
+import { OperationStatusBanner } from './common/OperationStatusBanner';
+import { DocumentPreviewModal } from './common/DocumentPreviewModal';
 
 interface ConvertViewProps {
   initialFile?: string;
@@ -37,14 +42,15 @@ interface QueueItem {
   name: string;
   size: number;
   extension: string;
-  targetFormat: 'docx' | 'pdf' | 'auto';
+  targetFormat: 'docx' | 'pdf' | 'image' | 'png' | 'jpg' | 'auto';
   outputPath?: string;
   pageRange?: string;
+  dpi?: number;
 }
 
 export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
-  // Mode selection: 'auto' | 'pdf2word' | 'word2pdf'
-  const [mode, setMode] = useState<'auto' | 'pdf2word' | 'word2pdf'>('auto');
+  // Mode selection: 'auto' | 'pdf2word' | 'word2pdf' | 'pdf2image'
+  const [mode, setMode] = useState<'auto' | 'pdf2word' | 'word2pdf' | 'pdf2image'>('auto');
 
   // File queue
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -54,16 +60,30 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
   // Engine status
   const [engineStatus, setEngineStatus] = useState<ConvertEngineStatus | null>(null);
   const [showEngineInfo, setShowEngineInfo] = useState(false);
+  const [isLoadingEngine, setIsLoadingEngine] = useState(false);
 
   // Conversion process state
   const [isConverting, setIsConverting] = useState(false);
   const [result, setResult] = useState<ConvertResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
 
-  // Fetch engine status on mount
-  useEffect(() => {
-    api.getConvertEngineStatus().then(setEngineStatus).catch(console.error);
-  }, []);
+  // Lazy toggle and fetch engine status only when requested by user
+  const handleToggleEngineInfo = async () => {
+    const next = !showEngineInfo;
+    setShowEngineInfo(next);
+    if (next && !engineStatus && !isLoadingEngine) {
+      setIsLoadingEngine(true);
+      try {
+        const s = await api.getConvertEngineStatus();
+        setEngineStatus(s);
+      } catch (err) {
+        console.error('获取转换引擎信息失败:', err);
+      } finally {
+        setIsLoadingEngine(false);
+      }
+    }
+  };
 
   // Handle initialFile passed from props or launch context
   useEffect(() => {
@@ -85,17 +105,22 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
     try {
       const meta = await api.getFileInfo(cleanPath);
       const ext = meta.extension.toLowerCase();
-      let targetFormat: 'docx' | 'pdf' | 'auto' = 'auto';
+      let targetFormat: 'docx' | 'pdf' | 'png' | 'jpg' | 'auto' = 'auto';
 
-      if (mode === 'pdf2word' || ext === 'pdf') {
+      if (mode === 'pdf2image' && ext === 'pdf') {
+        targetFormat = 'png';
+      } else if (mode === 'pdf2word' || ext === 'pdf') {
         targetFormat = 'docx';
       } else if (mode === 'word2pdf' || ext === 'docx' || ext === 'doc') {
         targetFormat = 'pdf';
       }
 
-      const defaultOut = targetFormat !== 'auto'
-        ? generateDefaultConvertOutputPath(cleanPath, targetFormat)
-        : '';
+      let defaultOut = '';
+      if ((targetFormat as string) === 'png' || (targetFormat as string) === 'jpg') {
+        defaultOut = generateDefaultPdfToImageDir(cleanPath);
+      } else if (targetFormat === 'docx' || targetFormat === 'pdf') {
+        defaultOut = generateDefaultConvertOutputPath(cleanPath, targetFormat);
+      }
 
       const newItem: QueueItem = {
         id: `${Date.now()}_${Math.random()}`,
@@ -106,6 +131,7 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
         targetFormat,
         outputPath: defaultOut,
         pageRange: 'all',
+        dpi: 150,
       };
 
       setQueue((prev) => [...prev, newItem]);
@@ -156,14 +182,20 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
   };
 
   // Update target format for item
-  const handleUpdateItemFormat = (id: string, targetFormat: 'docx' | 'pdf' | 'auto') => {
+  const handleUpdateItemFormat = (
+    id: string,
+    targetFormat: 'docx' | 'pdf' | 'image' | 'png' | 'jpg' | 'auto'
+  ) => {
     setQueue((prev) =>
       prev.map((item) => {
         if (item.id === id) {
-          const defaultOut = targetFormat !== 'auto'
-            ? generateDefaultConvertOutputPath(item.path, targetFormat)
-            : '';
-          return { ...item, targetFormat, outputPath: defaultOut };
+          let outputPath = item.outputPath;
+          if (targetFormat === 'png' || targetFormat === 'jpg' || targetFormat === 'image') {
+            outputPath = generateDefaultPdfToImageDir(item.path);
+          } else if (targetFormat === 'docx' || targetFormat === 'pdf') {
+            outputPath = generateDefaultConvertOutputPath(item.path, targetFormat);
+          }
+          return { ...item, targetFormat, outputPath };
         }
         return item;
       })
@@ -177,19 +209,40 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
     );
   };
 
+  // Update DPI for image output
+  const handleUpdateDpi = (id: string, dpi: number) => {
+    setQueue((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, dpi } : item))
+    );
+  };
+
   // Switch overall mode
-  const handleModeChange = (newMode: 'auto' | 'pdf2word' | 'word2pdf') => {
+  const handleModeChange = (newMode: 'auto' | 'pdf2word' | 'word2pdf' | 'pdf2image') => {
     setMode(newMode);
+    setResult(null);
+    setErrorMessage(null);
     setQueue((prev) =>
       prev.map((item) => {
-        let targetFormat: 'docx' | 'pdf' = 'docx';
-        if (newMode === 'pdf2word') targetFormat = 'docx';
-        else if (newMode === 'word2pdf') targetFormat = 'pdf';
-        else {
-          targetFormat = item.extension === 'pdf' ? 'docx' : 'pdf';
+        const ext = item.extension.toLowerCase();
+        let targetFormat = item.targetFormat;
+        let outputPath = item.outputPath;
+
+        if (newMode === 'pdf2image') {
+          if (ext === 'pdf') {
+            targetFormat = 'png';
+            outputPath = generateDefaultPdfToImageDir(item.path);
+          }
+        } else if (newMode === 'pdf2word' && ext === 'pdf') {
+          targetFormat = 'docx';
+          outputPath = generateDefaultConvertOutputPath(item.path, 'docx');
+        } else if (newMode === 'word2pdf' && (ext === 'docx' || ext === 'doc')) {
+          targetFormat = 'pdf';
+          outputPath = generateDefaultConvertOutputPath(item.path, 'pdf');
+        } else {
+          targetFormat = ext === 'pdf' ? 'docx' : 'pdf';
+          outputPath = generateDefaultConvertOutputPath(item.path, targetFormat);
         }
-        const defaultOut = generateDefaultConvertOutputPath(item.path, targetFormat);
-        return { ...item, targetFormat, outputPath: defaultOut };
+        return { ...item, targetFormat, outputPath };
       })
     );
   };
@@ -205,12 +258,14 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
     setErrorMessage(null);
     setResult(null);
 
+    const startTime = Date.now();
     try {
       const items: ConvertItem[] = queue.map((q) => ({
         input_path: q.path,
         output_path: q.outputPath && q.outputPath.trim().length > 0 ? q.outputPath.trim() : undefined,
         target_format: q.targetFormat,
         page_range: q.pageRange && q.pageRange !== 'all' ? q.pageRange : undefined,
+        dpi: q.dpi || 150,
       }));
 
       const res = await api.convertDocuments({
@@ -218,8 +273,17 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
         default_output_dir: defaultOutputDir.trim() || undefined,
       });
 
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 700) {
+        await new Promise((resolve) => setTimeout(resolve, 700 - elapsed));
+      }
+
       setResult(res);
     } catch (err: any) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed < 500) {
+        await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
+      }
       setErrorMessage(typeof err === 'string' ? err : err?.message || '转换过程中发生异常');
     } finally {
       setIsConverting(false);
@@ -234,35 +298,63 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
           <div>
             <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
               <ArrowLeftRight className="w-5 h-5 text-blue-500" />
-              <span>PDF 与 Word 相互转换</span>
+              <span>文档转换</span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              支持 PDF 转 Word (.docx) 及 Word (.docx/.doc) 转 PDF，高保真还原段落排版、表格与字体
+              PDF 与 Word 互转，PDF 导出图片。扫描件不含 OCR，复杂表格与图片请核对。
             </p>
           </div>
 
           <button
-            onClick={() => setShowEngineInfo(!showEngineInfo)}
-            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 text-xs transition-colors shadow-2xs"
+            type="button"
+            onClick={handleToggleEngineInfo}
+            className="flex items-center space-x-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 text-xs transition-colors shadow-2xs cursor-pointer"
           >
-            <Cpu className="w-3.5 h-3.5" />
-            <span>转换引擎信息</span>
+            {isLoadingEngine ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-500" />
+            ) : (
+              <Cpu className="w-3.5 h-3.5" />
+            )}
+            <span>{isLoadingEngine ? '检测中...' : '环境检测'}</span>
           </button>
         </div>
 
         {/* Engine Status Drawer */}
-        {showEngineInfo && engineStatus && (
-          <div className="bg-white dark:bg-slate-900 border border-blue-200/80 dark:border-blue-900/60 rounded-2xl p-4 shadow-xs space-y-3">
+        {showEngineInfo && (
+          <div className="bg-white dark:bg-slate-900 border border-blue-200/80 dark:border-blue-900/60 rounded-2xl p-4 shadow-xs space-y-3 animate-pop-in">
             <div className="flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-300">
               <span className="flex items-center space-x-1.5">
                 <Sparkles className="w-4 h-4 text-blue-500" />
-                <span>系统就绪转换引擎环境</span>
+                <span>本地依赖环境</span>
               </span>
-              <span className="text-[11px] text-slate-400">自动多级级联回退</span>
+              <span className="text-[11px] text-slate-400">仅使用排版引擎</span>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
+
+            {isLoadingEngine ? (
+              <div className="py-4 flex items-center justify-center space-x-2 text-xs text-slate-500">
+                <RefreshCw className="w-4 h-4 animate-spin text-blue-500" />
+                <span>正在检测转换环境...</span>
+              </div>
+            ) : engineStatus ? (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs">
               <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
-                <span className="text-slate-600 dark:text-slate-400">pdf2docx (AI排版)</span>
+                <span className="text-slate-600 dark:text-slate-400">pdftoppm (图片渲染)</span>
+                {engineStatus.pdftoppm_available ? (
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">已就绪</span>
+                ) : (
+                  <span className="text-slate-400 text-[11px]">未检测到</span>
+                )}
+              </div>
+              <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
+                <span className="text-slate-600 dark:text-slate-400">PyMuPDF (fitz)</span>
+                {engineStatus.fitz_available ? (
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">已就绪</span>
+                ) : (
+                  <span className="text-slate-400 text-[11px]">未检测到</span>
+                )}
+              </div>
+              <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
+                <span className="text-slate-600 dark:text-slate-400">pdf2docx (排版转换)</span>
                 {engineStatus.pdf2docx_available ? (
                   <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">已就绪</span>
                 ) : (
@@ -278,16 +370,8 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
                 )}
               </div>
               <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
-                <span className="text-slate-600 dark:text-slate-400">Chrome/Edge (矢量打印)</span>
-                {engineStatus.chrome_available ? (
-                  <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">已就绪</span>
-                ) : (
-                  <span className="text-slate-400 text-[11px]">未检测到</span>
-                )}
-              </div>
-              <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
-                <span className="text-slate-600 dark:text-slate-400">Pandoc 格式转换器</span>
-                {engineStatus.pandoc_available ? (
+                <span className="text-slate-600 dark:text-slate-400">Microsoft Word</span>
+                {engineStatus.word_available ? (
                   <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">已就绪</span>
                 ) : (
                   <span className="text-slate-400 text-[11px]">未检测到</span>
@@ -302,49 +386,66 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
                 )}
               </div>
               <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
-                <span className="text-slate-600 dark:text-slate-400">DocTools 原生保底</span>
-                <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">内置可用</span>
+                <span className="text-slate-600 dark:text-slate-400">docx2pdf</span>
+                {engineStatus.docx2pdf_available ? (
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">已就绪</span>
+                ) : (
+                  <span className="text-slate-400 text-[11px]">未检测到</span>
+                )}
               </div>
             </div>
-          </div>
-        )}
+          ) : null}
+        </div>
+      )}
 
         {/* Direction Tabs */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-1.5 shadow-xs flex space-x-1">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-1.5 shadow-xs grid grid-cols-2 sm:grid-cols-4 gap-1.5">
           <button
             onClick={() => handleModeChange('auto')}
-            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold transition-all flex items-center justify-center space-x-2 ${
+            className={`py-2 px-3 rounded-xl text-xs font-semibold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
               mode === 'auto'
                 ? 'bg-blue-500 text-white shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60'
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>智能自动识别</span>
+            <span>自动识别</span>
           </button>
 
           <button
             onClick={() => handleModeChange('pdf2word')}
-            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold transition-all flex items-center justify-center space-x-2 ${
+            className={`py-2 px-3 rounded-xl text-xs font-semibold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
               mode === 'pdf2word'
                 ? 'bg-blue-500 text-white shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60'
             }`}
           >
             <FileText className="w-3.5 h-3.5" />
-            <span>PDF 转 Word (.docx)</span>
+            <span>PDF 转 Word</span>
           </button>
 
           <button
             onClick={() => handleModeChange('word2pdf')}
-            className={`flex-1 py-2 px-3 rounded-xl text-xs font-semibold transition-all flex items-center justify-center space-x-2 ${
+            className={`py-2 px-3 rounded-xl text-xs font-semibold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
               mode === 'word2pdf'
                 ? 'bg-blue-500 text-white shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60'
             }`}
           >
             <FileType className="w-3.5 h-3.5" />
-            <span>Word 转 PDF (.pdf)</span>
+            <span>Word 转 PDF</span>
+          </button>
+
+          <button
+            onClick={() => handleModeChange('pdf2image')}
+            className={`py-2 px-3 rounded-xl text-xs font-semibold transition-all flex items-center justify-center space-x-1.5 cursor-pointer ${
+              mode === 'pdf2image'
+                ? 'bg-blue-500 text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60'
+            }`}
+          >
+            <ImageIcon className="w-3.5 h-3.5" />
+            <span>PDF 转图片</span>
           </button>
         </div>
 
@@ -355,7 +456,7 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
               添加待转换文件
             </label>
             <span className="text-[11px] text-slate-400">
-              支持 PDF / DOCX / DOC 格式，支持批量添加
+              支持 PDF / DOCX / DOC
             </span>
           </div>
 
@@ -366,10 +467,10 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
             <Upload className="w-8 h-8 text-blue-400 dark:text-blue-500 mx-auto stroke-1" />
             <div>
               <span className="font-semibold text-blue-600 dark:text-blue-400">
-                点击调用系统弹窗选择文件
+                点击选择文件
               </span>
               <span className="block text-[11px] text-slate-400 mt-0.5">
-                也可在下方输入框粘贴绝对路径，或通过访达右键快速添加
+                支持拖拽或粘贴路径
               </span>
             </div>
           </div>
@@ -385,13 +486,13 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
                   addFilePathToQueue(manualPathInput);
                 }
               }}
-              placeholder="输入或粘贴文件绝对路径，例如 /Users/jzefan/sample.pdf 并回车"
+              placeholder="输入或粘贴文件路径，按 Enter 添加"
               className="flex-1 px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-1 focus:ring-blue-500 font-mono"
             />
             <button
               onClick={() => addFilePathToQueue(manualPathInput)}
               disabled={!manualPathInput.trim()}
-              className="px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:bg-slate-200 dark:disabled:bg-slate-800 text-white disabled:text-slate-400 text-xs font-semibold transition-colors flex items-center space-x-1"
+              className="px-4 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 disabled:bg-slate-200 dark:disabled:bg-slate-800 text-white disabled:text-slate-400 text-xs font-semibold transition-colors flex items-center space-x-1 cursor-pointer disabled:cursor-not-allowed"
             >
               <Plus className="w-3.5 h-3.5" />
               <span>添加</span>
@@ -403,24 +504,24 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
             <div className="flex items-center space-x-2 min-w-0 flex-1 mr-3">
               <span className="text-slate-500 shrink-0">输出保存目录:</span>
               <span className="text-slate-700 dark:text-slate-300 font-mono truncate text-[11px]">
-                {defaultOutputDir || '与源文件同目录 (默认)'}
+                {defaultOutputDir || '与原文件同目录（默认）'}
               </span>
             </div>
             <div className="flex items-center space-x-2 shrink-0">
               {defaultOutputDir && (
                 <button
                   onClick={() => setDefaultOutputDir('')}
-                  className="text-[11px] text-slate-400 hover:text-red-500"
+                  className="text-[11px] text-slate-400 hover:text-red-500 cursor-pointer"
                 >
                   重置
                 </button>
               )}
               <button
                 onClick={handlePickOutputDir}
-                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-slate-300 text-slate-600 dark:text-slate-400 text-[11px] transition-colors"
+                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 hover:border-slate-300 text-slate-600 dark:text-slate-400 text-[11px] transition-colors cursor-pointer"
               >
                 <FolderOpen className="w-3 h-3" />
-                <span>自定义目录</span>
+                <span>更改目录</span>
               </button>
             </div>
           </div>
@@ -430,20 +531,15 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
         {queue.length > 0 && (
           <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-3">
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  转换队列 ({queue.length} 个文件)
-                </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 font-medium">
-                  批量处理就绪
-                </span>
-              </div>
+              <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                待转换文件（{queue.length}）
+              </span>
               <button
                 onClick={handleClearQueue}
-                className="text-[11px] text-red-500 hover:text-red-600 flex items-center space-x-1"
+                className="text-[11px] text-red-500 hover:text-red-600 flex items-center space-x-1 cursor-pointer"
               >
                 <Trash2 className="w-3 h-3" />
-                <span>清空队列</span>
+                <span>清空</span>
               </button>
             </div>
 
@@ -476,13 +572,22 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
                         </div>
                       </div>
 
-                      <div className="flex items-center space-x-3 shrink-0">
+                      <div className="flex items-center space-x-2 shrink-0">
                         <span className="text-[11px] text-slate-500 font-mono">
                           {formatFileSize(item.size)}
                         </span>
                         <button
+                          type="button"
+                          onClick={() => setPreviewPath(item.path)}
+                          className="p-1 rounded-md text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/30 transition-colors cursor-pointer"
+                          title="预览"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </button>
+                        <button
                           onClick={() => handleRemoveItem(item.id)}
-                          className="p-1 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                          className="p-1 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer"
+                          title="移除"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -498,29 +603,66 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
                           onChange={(e) =>
                             handleUpdateItemFormat(
                               item.id,
-                              e.target.value as 'docx' | 'pdf' | 'auto'
+                              e.target.value as any
                             )
                           }
                           className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400 focus:outline-hidden"
                         >
-                          <option value="docx">Word 文档 (.docx)</option>
-                          <option value="pdf">PDF 文档 (.pdf)</option>
-                          <option value="auto">自动识别</option>
+                          {isPdf ? (
+                            <>
+                              <option value="docx">Word (.docx)</option>
+                              <option value="png">PNG 图片</option>
+                              <option value="jpg">JPG 图片</option>
+                              <option value="auto">自动识别</option>
+                            </>
+                          ) : (
+                            <>
+                              <option value="pdf">PDF (.pdf)</option>
+                              <option value="docx">Word (.docx)</option>
+                              <option value="auto">自动识别</option>
+                            </>
+                          )}
                         </select>
                       </div>
 
-                      {isPdf && item.targetFormat === 'docx' && (
+                      {/* PDF to Image specific options */}
+                      {isPdf && (item.targetFormat === 'png' || item.targetFormat === 'jpg' || item.targetFormat === 'image') && (
                         <div className="flex items-center space-x-1.5">
-                          <span className="text-slate-400">转换页码:</span>
+                          <span className="text-slate-400">分辨率:</span>
+                          <select
+                            value={item.dpi || 150}
+                            onChange={(e) => handleUpdateDpi(item.id, Number(e.target.value))}
+                            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-0.5 text-[11px] font-medium text-slate-700 dark:text-slate-300 focus:outline-hidden"
+                          >
+                            <option value={72}>72 DPI (标准)</option>
+                            <option value={150}>150 DPI (高清)</option>
+                            <option value={300}>300 DPI (超清)</option>
+                          </select>
+                        </div>
+                      )}
+
+                      {isPdf && (
+                        <div className="flex items-center space-x-1.5">
+                          <span className="text-slate-400">页码范围:</span>
                           <input
                             type="text"
                             value={item.pageRange || 'all'}
                             onChange={(e) =>
                               handleUpdatePageRange(item.id, e.target.value)
                             }
-                            placeholder="all 或 1-3"
+                            placeholder="全部或 1-3"
                             className="w-20 px-1.5 py-0.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 font-mono text-[10px]"
+                            title="例如 1-3 或 2,4-5，默认全部转换"
                           />
+                        </div>
+                      )}
+
+                      {/* Target directory badge for PDF to Image */}
+                      {isPdf && (item.targetFormat === 'png' || item.targetFormat === 'jpg' || item.targetFormat === 'image') && (
+                        <div className="w-full flex items-center space-x-1.5 text-[10px] text-slate-500 dark:text-slate-400 font-mono bg-blue-50/60 dark:bg-blue-950/20 px-2 py-1 rounded-md border border-blue-100 dark:border-blue-900/30">
+                          <FolderOpen className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                          <span className="shrink-0 text-blue-600 dark:text-blue-400 font-medium">输出目录:</span>
+                          <span className="truncate">{item.outputPath || generateDefaultPdfToImageDir(item.path)}</span>
                         </div>
                       )}
                     </div>
@@ -529,22 +671,35 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
               })}
             </div>
 
+            {/* Loading Status Feedback */}
+            {isConverting && (
+              <div className="pt-2">
+                <OperationStatusBanner
+                  status="loading"
+                  loadingLabel={`正在转换文档（共 ${queue.length} 个）...`}
+                  loadingSublabel="正在处理文档格式与版面"
+                  accentColor="blue"
+                  pixelVariant="Drive"
+                />
+              </div>
+            )}
+
             {/* Action Button */}
             <div className="pt-3">
               <button
                 onClick={handleConvert}
                 disabled={isConverting}
-                className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-semibold text-xs transition-all shadow-md shadow-blue-500/20 flex items-center justify-center space-x-2"
+                className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-semibold text-xs transition-all shadow-md shadow-blue-500/20 flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
               >
                 {isConverting ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>正在高保真转换中，请稍候...</span>
+                    <span>正在转换...</span>
                   </>
                 ) : (
                   <>
                     <ArrowLeftRight className="w-4 h-4" />
-                    <span>立即开始批量转换 ({queue.length} 个文件)</span>
+                    <span>开始转换（${queue.length} 个文件）</span>
                   </>
                 )}
               </button>
@@ -554,92 +709,167 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
 
         {/* Error notification */}
         {errorMessage && (
-          <div className="p-3.5 rounded-xl border border-red-200 dark:border-red-900/60 bg-red-50/50 dark:bg-red-950/20 text-red-600 dark:text-red-400 text-xs flex items-center space-x-2.5">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            <span className="flex-1">{errorMessage}</span>
-          </div>
+          <OperationStatusBanner
+            status="error"
+            errorTitle="转换失败"
+            errorMessage={errorMessage}
+            onRetry={handleConvert}
+            onDismiss={() => setErrorMessage(null)}
+          />
         )}
 
-        {/* Success Results Card */}
+        {/* Results Card */}
         {result && (
-          <div className="bg-white dark:bg-slate-900 border border-emerald-200/80 dark:border-emerald-900/60 rounded-2xl p-5 shadow-xs space-y-4">
-            <div className="flex items-center space-x-2.5">
-              <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                <CheckCircle2 className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-xs font-bold text-slate-800 dark:text-slate-100">
-                  {result.message}
-                </h3>
-                <p className="text-[11px] text-slate-400">转换完成的文件已成功输出至磁盘</p>
-              </div>
-            </div>
+          <div className="space-y-4">
+            <OperationStatusBanner
+              status={result.results.some((r) => !r.success) ? 'error' : 'success'}
+              successTitle="批量转换完成"
+              successMessage={result.message}
+              errorTitle={
+                result.results.every((r) => !r.success)
+                  ? '全部文档转换失败'
+                  : '部分文档转换失败'
+              }
+              errorMessage={
+                result.results.some((r) => !r.success)
+                  ? `存在 ${result.results.filter((r) => !r.success).length} 个文档转换失败，具体原因见下方列表`
+                  : null
+              }
+              onRetry={result.results.some((r) => !r.success) ? handleConvert : undefined}
+              onDismiss={() => setResult(null)}
+            />
 
-            <div className="space-y-2">
-              {result.results.map((res, idx) => (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
+              <div className="flex items-center space-x-2.5">
                 <div
-                  key={idx}
-                  className={`p-3 rounded-xl border ${
-                    res.success
-                      ? 'border-emerald-200/70 dark:border-emerald-900/50 bg-emerald-50/30 dark:bg-emerald-950/10'
-                      : 'border-red-200/70 dark:border-red-900/50 bg-red-50/30 dark:bg-red-950/10'
-                  } flex flex-col space-y-2`}
+                  className={`p-1.5 rounded-lg ${
+                    result.results.some((r) => !r.success)
+                      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+                      : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+                  }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <div className="min-w-0 flex-1 mr-3">
-                      <div className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">
-                        {res.output_path.split('/').pop() || res.input_path.split('/').pop()}
-                      </div>
-                      <div className="text-[10px] text-slate-400 font-mono truncate">
-                        {res.output_path || res.input_path}
-                      </div>
-                    </div>
-                    <div className="text-right shrink-0">
-                      <span
-                        className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
-                          res.success
-                            ? 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300'
-                            : 'bg-red-100 dark:bg-red-900/60 text-red-700 dark:text-red-300'
-                        }`}
-                      >
-                        {res.engine_used}
-                      </span>
-                    </div>
-                  </div>
-
-                  {res.success && (
-                    <div className="pt-2 border-t border-slate-200/40 dark:border-slate-800/40 flex items-center justify-between text-[11px]">
-                      <div className="text-slate-500 font-mono">
-                        {formatFileSize(res.original_size)} → {formatFileSize(res.converted_size)}
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={() => api.openFilePath(res.output_path)}
-                          className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-300 font-medium transition-colors"
-                        >
-                          <Eye className="w-3 h-3" />
-                          <span>打开文件</span>
-                        </button>
-                        <button
-                          onClick={() => api.revealInFinder(res.output_path)}
-                          className="flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors"
-                        >
-                          <ExternalLink className="w-3 h-3" />
-                          <span>在访达中显示</span>
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {!res.success && (
-                    <div className="text-[11px] text-red-500">{res.message}</div>
-                  )}
+                  <CheckCircle2 className="w-5 h-5" />
                 </div>
-              ))}
+                <div>
+                  <h3 className="text-xs font-bold text-slate-800 dark:text-slate-100">
+                    {result.message}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    共处理 {result.results.length} 个文件，成功 {result.results.filter((r) => r.success).length} 个，失败 {result.results.filter((r) => !r.success).length} 个
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {result.results.map((res, idx) => (
+                  <div
+                    key={idx}
+                    className={`p-3 rounded-xl border ${
+                      res.success
+                        ? 'border-emerald-200/70 dark:border-emerald-900/50 bg-emerald-50/30 dark:bg-emerald-950/10'
+                        : 'border-red-200/70 dark:border-red-900/50 bg-red-50/30 dark:bg-red-950/10'
+                    } flex flex-col space-y-2`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0 flex-1 mr-3">
+                        <div className="text-xs font-medium text-slate-800 dark:text-slate-200 truncate">
+                          {getPathBasename(res.output_path) || getPathBasename(res.input_path)}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-mono truncate">
+                          {res.output_path || res.input_path}
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                            res.success
+                              ? 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300'
+                              : 'bg-red-100 dark:bg-red-900/60 text-red-700 dark:text-red-300'
+                          }`}
+                        >
+                          {res.engine_used || (res.success ? 'Success' : 'Failed')}
+                        </span>
+                      </div>
+                    </div>
+
+                    {res.success && (
+                      <div className="pt-2 border-t border-slate-200/40 dark:border-slate-800/40 flex items-center justify-between text-[11px]">
+                        <div className="text-slate-500 font-mono">
+                          {formatFileSize(res.original_size)} → {formatFileSize(res.converted_size)}
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          {(!res.output_path.toLowerCase().endsWith('.pdf') &&
+                            !res.output_path.toLowerCase().endsWith('.docx') &&
+                            !res.output_path.toLowerCase().endsWith('.doc')) ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => api.openFilePath(res.output_path)}
+                                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-300 font-medium transition-colors cursor-pointer"
+                              >
+                                <FolderOpen className="w-3 h-3" />
+                                <span>打开图片目录</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => api.revealInFinder(res.output_path)}
+                                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors cursor-pointer"
+                              >
+                                <FolderOpen className="w-3 h-3" />
+                                <span>在访达中显示</span>
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => setPreviewPath(res.output_path)}
+                                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg bg-blue-50 hover:bg-blue-100 dark:bg-blue-950/40 dark:hover:bg-blue-900/40 text-blue-600 dark:text-blue-300 font-medium transition-colors cursor-pointer"
+                              >
+                                <Eye className="w-3 h-3" />
+                                <span>预览</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => api.openFilePath(res.output_path)}
+                                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors cursor-pointer"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                                <span>系统打开</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => api.revealInFinder(res.output_path)}
+                                className="flex items-center space-x-1 px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 transition-colors cursor-pointer"
+                              >
+                                <FolderOpen className="w-3 h-3" />
+                                <span>在访达中显示</span>
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {!res.success && (
+                      <div className="mt-1 p-2 rounded-lg bg-red-100/70 dark:bg-red-950/60 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 text-xs flex items-center space-x-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-red-500" />
+                        <span className="font-medium">失败原因：{res.message || '转换失败'}</span>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
       </div>
+
+      {/* Document Preview Modal */}
+      <DocumentPreviewModal
+        path={previewPath}
+        onClose={() => setPreviewPath(null)}
+      />
     </div>
   );
 };

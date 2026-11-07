@@ -6,22 +6,39 @@ import {
   ConvertRequest,
   ConvertResult,
   DirContent,
+  DocumentPreviewData,
   FileItem,
+  InsertPagesRequest,
   IntegrationStatus,
   LaunchContext,
   MergeRequest,
   OperationResult,
+  PdfToImageRequest,
   QuickPath,
   WatermarkAnalysis,
   WatermarkRemoveRequest,
 } from '../types';
 
+export const isTauriEnvironment = (): boolean => {
+  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+};
+
 export const api = {
   getLaunchContext: async (): Promise<LaunchContext> => {
+    if (!isTauriEnvironment()) {
+      return {
+        initial_paths: [],
+        initial_directory: '',
+        initial_action: 'browse',
+      };
+    }
     return await invoke<LaunchContext>('get_launch_context');
   },
 
   pollPendingAction: async (): Promise<LaunchContext | null> => {
+    if (!isTauriEnvironment()) {
+      return null;
+    }
     return await invoke<LaunchContext | null>('poll_pending_action');
   },
 
@@ -41,6 +58,10 @@ export const api = {
     return await invoke<OperationResult>('merge_files', { request });
   },
 
+  insertPagesIntoPdf: async (request: InsertPagesRequest): Promise<OperationResult> => {
+    return await invoke<OperationResult>('insert_pages_into_pdf', { request });
+  },
+
   compressPdf: async (request: CompressRequest): Promise<CompressResult> => {
     return await invoke<CompressResult>('compress_pdf_file', { request });
   },
@@ -57,6 +78,10 @@ export const api = {
     return await invoke<ConvertResult>('convert_documents', { request });
   },
 
+  convertPdfToImages: async (request: PdfToImageRequest): Promise<OperationResult> => {
+    return await invoke<OperationResult>('convert_pdf_to_images', { request });
+  },
+
   getConvertEngineStatus: async (): Promise<ConvertEngineStatus> => {
     return await invoke<ConvertEngineStatus>('get_convert_engine_status');
   },
@@ -70,6 +95,15 @@ export const api = {
   },
 
   getIntegrationStatus: async (): Promise<IntegrationStatus> => {
+    if (!isTauriEnvironment()) {
+      return {
+        platform: 'web',
+        macos_service_installed: false,
+        ghostscript_available: false,
+        libreoffice_available: false,
+        textutil_available: false,
+      };
+    }
     return await invoke<IntegrationStatus>('get_integration_status');
   },
 
@@ -91,5 +125,13 @@ export const api = {
 
   setWindowMode: async (mode: 'compact' | 'full'): Promise<void> => {
     return await invoke<void>('set_window_mode', { mode });
+  },
+
+  getDocumentPreview: async (path: string): Promise<DocumentPreviewData> => {
+    return await invoke<DocumentPreviewData>('get_document_preview', { path });
+  },
+
+  quickLookFile: async (path: string): Promise<void> => {
+    return await invoke<void>('quick_look_file', { path });
   },
 };

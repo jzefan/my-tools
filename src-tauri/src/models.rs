@@ -50,10 +50,18 @@ pub struct MergeRequest {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct InsertPagesRequest {
+    pub target_pdf_path: String,
+    pub insert_items: Vec<MergeItem>,
+    pub insert_after_page: u32, // 0 = start (before page 1), N = after page N
+    pub output_path: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct CompressRequest {
     pub input_path: String,
     pub output_path: String,
-    pub quality: u8, // 10 - 100
+    pub quality: u8,  // 10 - 100
     pub max_dpi: u32, // e.g. 72, 96, 150, 300
     pub strip_metadata: bool,
     pub use_advanced_engine: bool, // uses Ghostscript if available
@@ -105,6 +113,7 @@ pub struct OperationResult {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct IntegrationStatus {
+    pub platform: String,
     pub macos_service_installed: bool,
     pub ghostscript_available: bool,
     pub libreoffice_available: bool,
@@ -115,7 +124,17 @@ pub struct IntegrationStatus {
 pub struct ConvertItem {
     pub input_path: String,
     pub output_path: Option<String>,
-    pub target_format: String, // "docx" | "pdf" | "auto"
+    pub target_format: String, // "docx" | "pdf" | "image" | "png" | "jpg" | "auto"
+    pub page_range: Option<String>,
+    pub dpi: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PdfToImageRequest {
+    pub input_path: String,
+    pub output_dir: Option<String>,
+    pub format: String,   // "png" | "jpg"
+    pub dpi: Option<u32>, // default 150
     pub page_range: Option<String>,
 }
 
@@ -152,4 +171,22 @@ pub struct ConvertEngineStatus {
     pub chrome_available: bool,
     pub pages_available: bool,
     pub word_available: bool,
+    pub pdftoppm_available: bool,
+    pub fitz_available: bool,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DocumentPreviewData {
+    pub path: String,
+    pub name: String,
+    pub extension: String,
+    pub size: u64,
+    pub modified: u64,
+    pub page_count: Option<u32>,
+    pub mime_type: String,
+    pub data_url: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub text_content: Option<String>,
+    pub html_content: Option<String>,
+    pub metadata: serde_json::Value,
 }

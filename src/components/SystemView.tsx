@@ -59,7 +59,7 @@ export const SystemView: React.FC<SystemViewProps> = ({ status, refreshStatus })
       const reg = await api.getWindowsRegContent();
       setWindowsRegContent(reg);
     } catch (err) {
-      console.error(err);
+      setMessage(String(err));
     }
   };
 
@@ -78,14 +78,15 @@ export const SystemView: React.FC<SystemViewProps> = ({ status, refreshStatus })
         <div>
           <h2 className="text-lg font-bold text-slate-800 dark:text-slate-100 flex items-center space-x-2">
             <Settings className="w-5 h-5 text-indigo-500" />
-            <span>系统右键菜单与运行环境集成</span>
+            <span>系统集成</span>
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            将 DocTools 无缝集成到操作系统的上下文菜单中，右键即可直接处理文档
+            在系统右键菜单中快速调用 DocTools
           </p>
         </div>
 
         {/* macOS Finder Integration Card */}
+        {status?.platform === 'macos' && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3">
@@ -94,10 +95,10 @@ export const SystemView: React.FC<SystemViewProps> = ({ status, refreshStatus })
               </div>
               <div>
                 <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
-                  macOS 访达 (Finder) 右键快捷操作
+                  访达快捷操作
                 </h3>
                 <p className="text-xs text-slate-400">
-                  安装到 ~/Library/Services，支持单文件与多选文件右键直接唤起
+                  在访达中选中文件右键即可快速打开
                 </p>
               </div>
             </div>
@@ -106,31 +107,20 @@ export const SystemView: React.FC<SystemViewProps> = ({ status, refreshStatus })
               {status?.macos_service_installed ? (
                 <span className="px-2.5 py-1 rounded-full bg-emerald-100 dark:bg-emerald-950/60 border border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 font-semibold text-xs flex items-center space-x-1">
                   <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>已安装就绪</span>
+                  <span>已启用</span>
                 </span>
               ) : (
                 <span className="px-2.5 py-1 rounded-full bg-amber-100 dark:bg-amber-950/60 border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300 font-semibold text-xs flex items-center space-x-1">
                   <AlertCircle className="w-3.5 h-3.5" />
-                  <span>尚未安装</span>
+                  <span>未配置</span>
                 </span>
               )}
             </div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/60 text-xs text-slate-600 dark:text-slate-300 space-y-1.5 leading-relaxed">
-            <div className="font-semibold text-slate-700 dark:text-slate-200 flex items-center space-x-1">
-              <Sparkles className="w-3.5 h-3.5 text-indigo-500" />
-              <span>使用说明：</span>
-            </div>
-            <p>
-              1. 点击下方按钮一键安装服务；
-            </p>
-            <p>
-              2. 在访达中选中任意一个或多个 PDF、图片、Word 文件，右键点击，在「快捷操作 / 服务」菜单中选择「DocTools: 合并与处理」；
-            </p>
-            <p>
-              3. DocTools 将自动激活并聚焦当前文件所在的文件夹，左侧展示完整目录结构供您向上/向下浏览，右侧自动预载所选文件！
-            </p>
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200/60 dark:border-slate-700/60 text-xs text-slate-600 dark:text-slate-300 flex items-center space-x-2">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+            <span>安装后，在访达中选中文件，通过「快捷操作 &gt; DocTools」直接处理。</span>
           </div>
 
           {message && (
@@ -146,7 +136,7 @@ export const SystemView: React.FC<SystemViewProps> = ({ status, refreshStatus })
               className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-medium text-xs flex items-center space-x-2 transition-colors cursor-pointer shadow-xs"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isInstalling ? 'animate-spin' : ''}`} />
-              <span>{status?.macos_service_installed ? '重新安装 / 刷新服务' : '一键安装访达右键快捷操作'}</span>
+              <span>{status?.macos_service_installed ? '重新安装' : '安装服务'}</span>
             </button>
 
             {status?.macos_service_installed && (
@@ -161,7 +151,10 @@ export const SystemView: React.FC<SystemViewProps> = ({ status, refreshStatus })
           </div>
         </div>
 
-        {/* Windows Context Menu (Future Expansion) Card */}
+        )}
+
+        {/* Windows Context Menu Card */}
+        {status?.platform === 'windows' && (
         <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 flex items-center justify-center">
@@ -169,10 +162,10 @@ export const SystemView: React.FC<SystemViewProps> = ({ status, refreshStatus })
             </div>
             <div>
               <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">
-                Windows 扩展支持 (Windows 注册表右键菜单)
+                Windows 注册表菜单
               </h3>
               <p className="text-xs text-slate-400">
-                未来跨平台打包为 Windows 客户端时，可一键导入 .reg 注册表激活右键「使用 DocTools 合并/处理」
+                导出 .reg 注册表脚本，用于在 Windows 资源管理器右键中集成 DocTools
               </p>
             </div>
           </div>
@@ -183,7 +176,7 @@ export const SystemView: React.FC<SystemViewProps> = ({ status, refreshStatus })
               className="px-3.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-xs font-medium text-slate-700 dark:text-slate-300 flex items-center space-x-1.5 transition-colors cursor-pointer"
             >
               <Download className="w-3.5 h-3.5" />
-              <span>生成 Windows .reg 注册表代码</span>
+              <span>查看注册表配置</span>
             </button>
           ) : (
             <div className="space-y-2">
@@ -204,29 +197,32 @@ export const SystemView: React.FC<SystemViewProps> = ({ status, refreshStatus })
           )}
         </div>
 
+        )}
+        {status?.platform !== 'macos' && message && <p className="text-xs text-rose-600">{message}</p>}
+
         {/* Engine Diagnostics */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-3">
           <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200">
-            底层转换与处理引擎状态
+            环境依赖检测
           </h3>
           <div className="grid grid-cols-3 gap-3">
             <div className="p-3 rounded-xl border border-slate-200/60 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
-              <div className="text-[11px] text-slate-400 mb-1">Ghostscript 压缩引擎</div>
+              <div className="text-[11px] text-slate-400 mb-1">Ghostscript (PDF 压缩)</div>
               <div className="flex items-center space-x-1 text-xs font-semibold">
                 {status?.ghostscript_available ? (
                   <span className="text-emerald-600 dark:text-emerald-400 flex items-center">
-                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> 已检测到
+                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> 已就绪
                   </span>
                 ) : (
                   <span className="text-slate-400 flex items-center">
-                    <AlertCircle className="w-3.5 h-3.5 mr-1" /> 未安装 (使用原生引擎)
+                    <AlertCircle className="w-3.5 h-3.5 mr-1" /> 未安装（使用原生引擎）
                   </span>
                 )}
               </div>
             </div>
 
             <div className="p-3 rounded-xl border border-slate-200/60 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
-              <div className="text-[11px] text-slate-400 mb-1">LibreOffice Word 转换引擎</div>
+              <div className="text-[11px] text-slate-400 mb-1">LibreOffice (文档转换)</div>
               <div className="flex items-center space-x-1 text-xs font-semibold">
                 {status?.libreoffice_available ? (
                   <span className="text-emerald-600 dark:text-emerald-400 flex items-center">
@@ -234,24 +230,24 @@ export const SystemView: React.FC<SystemViewProps> = ({ status, refreshStatus })
                   </span>
                 ) : (
                   <span className="text-slate-400 flex items-center">
-                    <AlertCircle className="w-3.5 h-3.5 mr-1" /> 未检测到 (回退系统textutil)
+                    <AlertCircle className="w-3.5 h-3.5 mr-1" /> 未安装（转换功能受限）
                   </span>
                 )}
               </div>
             </div>
 
-            <div className="p-3 rounded-xl border border-slate-200/60 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
-              <div className="text-[11px] text-slate-400 mb-1">macOS textutil 原生支持</div>
+            {status?.platform === 'macos' && <div className="p-3 rounded-xl border border-slate-200/60 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50">
+              <div className="text-[11px] text-slate-400 mb-1">macOS textutil (系统内置)</div>
               <div className="flex items-center space-x-1 text-xs font-semibold">
                 {status?.textutil_available ? (
                   <span className="text-emerald-600 dark:text-emerald-400 flex items-center">
-                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> 系统原生内置
+                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> 系统内置
                   </span>
                 ) : (
                   <span className="text-slate-400">不可用</span>
                 )}
               </div>
-            </div>
+            </div>}
           </div>
         </div>
       </div>

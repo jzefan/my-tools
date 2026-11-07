@@ -10,9 +10,16 @@ use lopdf::{Dictionary, Document, Object, Stream};
 use std::fs;
 use std::path::PathBuf;
 
+fn test_temp_dir(label: &str) -> PathBuf {
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+    std::env::temp_dir().join(format!("{label}-{}-{nonce}", std::process::id()))
+}
+
 fn create_sample_pdf_with_watermark(path: &PathBuf, watermark_text: &str) {
     let mut doc = Document::with_version("1.5");
-    let pages_id = (1, 0);
+    let pages_id = doc.new_object_id();
+
+    let font = doc.add_object(lopdf::dictionary! {"Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica"});
 
     // Create 2 pages
     let mut page_refs = Vec::new();
@@ -21,16 +28,21 @@ fn create_sample_pdf_with_watermark(path: &PathBuf, watermark_text: &str) {
         // Content with main text + watermark text
         let content_ops = vec![
             Operation::new("BT", vec![]),
-            Operation::new("/F1", vec![Object::Integer(24)]),
+            Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), Object::Integer(24)]),
             Operation::new("Td", vec![Object::Real(100.0), Object::Real(700.0)]),
-            Operation::new("Tj", vec![Object::string_literal(format!("Page {} Content", p))]),
+            Operation::new(
+                "Tj",
+                vec![Object::string_literal(format!("Page {} Content", p))],
+            ),
             // Watermark
             Operation::new("Td", vec![Object::Real(0.0), Object::Real(-200.0)]),
             Operation::new("Tj", vec![Object::string_literal(watermark_text)]),
             Operation::new("ET", vec![]),
         ];
 
-        let content = Content { operations: content_ops };
+        let content = Content {
+            operations: content_ops,
+        };
         let content_bytes = content.encode().unwrap();
         let content_stream = Stream::new(Dictionary::new(), content_bytes);
         let content_id = doc.add_object(Object::Stream(content_stream));
@@ -47,6 +59,7 @@ fn create_sample_pdf_with_watermark(path: &PathBuf, watermark_text: &str) {
                 Object::Real(842.0),
             ]),
         );
+        page_dict.set("Resources", lopdf::dictionary! {"Font" => lopdf::dictionary! {"F1" => font}});
         page_dict.set("Contents", Object::Reference(content_id));
 
         let page_id = doc.add_object(Object::Dictionary(page_dict));
@@ -63,7 +76,8 @@ fn create_sample_pdf_with_watermark(path: &PathBuf, watermark_text: &str) {
     let mut catalog_dict = Dictionary::new();
     catalog_dict.set("Type", Object::Name(b"Catalog".to_vec()));
     catalog_dict.set("Pages", Object::Reference(pages_id));
-    doc.objects.insert(catalog_id, Object::Dictionary(catalog_dict));
+    doc.objects
+        .insert(catalog_id, Object::Dictionary(catalog_dict));
     doc.trailer.set("Root", Object::Reference(catalog_id));
 
     doc.save(path).unwrap();
@@ -79,7 +93,7 @@ fn create_sample_image(path: &PathBuf) {
 
 #[test]
 fn test_image_to_pdf_and_merge() {
-    let temp_dir = std::env::temp_dir().join("doctools_test_merge");
+    let temp_dir = test_temp_dir("doctools_test_merge");
     let _ = fs::create_dir_all(&temp_dir);
 
     let pdf1_path = temp_dir.join("test1.pdf");
@@ -125,7 +139,10 @@ fn test_image_to_pdf_and_merge() {
     println!("loaded trailer: {:?}", loaded.trailer);
     println!("loaded catalog: {:?}", loaded.catalog());
     println!("object (1, 0): {:?}", loaded.objects.get(&(1, 0)));
-    println!("all object keys: {:?}", loaded.objects.keys().collect::<Vec<_>>());
+    println!(
+        "all object keys: {:?}",
+        loaded.objects.keys().collect::<Vec<_>>()
+    );
     println!("loaded pages: {:?}", loaded.get_pages());
     assert_eq!(loaded.get_pages().len(), 3);
 
@@ -134,7 +151,7 @@ fn test_image_to_pdf_and_merge() {
 
 #[test]
 fn test_watermark_analysis_and_removal() {
-    let temp_dir = std::env::temp_dir().join("doctools_test_wm");
+    let temp_dir = test_temp_dir("doctools_test_wm");
     let _ = fs::create_dir_all(&temp_dir);
 
     let sample_pdf = temp_dir.join("watermarked.pdf");
@@ -164,7 +181,10 @@ fn test_watermark_analysis_and_removal() {
 
     // 3. Verify cleaned document no longer has watermark
     let analysis_clean = analyze_pdf_watermarks(cleaned_pdf.to_str().unwrap()).unwrap();
-    let still_found = analysis_clean.text_watermarks.iter().any(|c| c.text == wm_text);
+    let still_found = analysis_clean
+        .text_watermarks
+        .iter()
+        .any(|c| c.text == wm_text);
     assert!(!still_found, "Watermark text should have been removed!");
 
     let _ = fs::remove_dir_all(&temp_dir);
@@ -172,7 +192,7 @@ fn test_watermark_analysis_and_removal() {
 
 #[test]
 fn test_pdf_compression() {
-    let temp_dir = std::env::temp_dir().join("doctools_test_compress");
+    let temp_dir = test_temp_dir("doctools_test_compress");
     let _ = fs::create_dir_all(&temp_dir);
 
     let sample_pdf = temp_dir.join("to_compress.pdf");
@@ -196,21 +216,30 @@ fn test_pdf_compression() {
 }
 
 #[test]
+#[ignore = "manual only: installs a Finder service in the real user account"]
 fn test_system_integration_install() {
     let status = system_integration::check_status();
     println!("Current system integration status: {:?}", status);
 
     // Test install
     let install_res = system_integration::install_macos_service();
-    assert!(install_res.is_ok(), "Install macOS service failed: {:?}", install_res);
+    assert!(
+        install_res.is_ok(),
+        "Install macOS service failed: {:?}",
+        install_res
+    );
 
     let post_status = system_integration::check_status();
-    assert!(post_status.macos_service_installed, "Service should be reported as installed");
+    assert!(
+        post_status.macos_service_installed,
+        "Service should be reported as installed"
+    );
 }
 
 #[test]
+#[ignore = "manual only: requires external Python/PDF-to-Word conversion engines"]
 fn test_toc_conversion_formatting() {
-    let temp_dir = std::env::temp_dir().join("doctools_test_toc");
+    let temp_dir = test_temp_dir("doctools_test_toc");
     let _ = fs::create_dir_all(&temp_dir);
 
     let sample_pdf = temp_dir.join("toc_sample.pdf");
@@ -249,22 +278,39 @@ doc.save(r'{}')
     if !sample_pdf.exists() {
         // Fallback: create an English TOC PDF using lopdf
         let mut doc = Document::with_version("1.5");
-        let pages_id = (1, 0);
+        let pages_id = doc.new_object_id();
         let content_ops = vec![
             Operation::new("BT", vec![]),
-            Operation::new("/F1", vec![Object::Integer(16)]),
+            Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), Object::Integer(16)]),
             Operation::new("Td", vec![Object::Real(72.0), Object::Real(750.0)]),
             Operation::new("Tj", vec![Object::string_literal("Table of Contents")]),
             Operation::new("Td", vec![Object::Real(0.0), Object::Real(-40.0)]),
-            Operation::new("/F1", vec![Object::Integer(12)]),
-            Operation::new("Tj", vec![Object::string_literal("1. Project Initiation Documentation............................................................4")]),
+            Operation::new("Tf", vec![Object::Name(b"F1".to_vec()), Object::Integer(12)]),
+            Operation::new(
+                "Tj",
+                vec![Object::string_literal(
+                    "1. Project Initiation Documentation............................................................4",
+                )],
+            ),
             Operation::new("Td", vec![Object::Real(0.0), Object::Real(-30.0)]),
-            Operation::new("Tj", vec![Object::string_literal("   1.1 System Upgrade Plan......................................................................4")]),
+            Operation::new(
+                "Tj",
+                vec![Object::string_literal(
+                    "   1.1 System Upgrade Plan......................................................................4",
+                )],
+            ),
             Operation::new("Td", vec![Object::Real(0.0), Object::Real(-30.0)]),
-            Operation::new("Tj", vec![Object::string_literal("   1.2 Review Comments (Pending)................................................................8")]),
+            Operation::new(
+                "Tj",
+                vec![Object::string_literal(
+                    "   1.2 Review Comments (Pending)................................................................8",
+                )],
+            ),
             Operation::new("ET", vec![]),
         ];
-        let content = Content { operations: content_ops };
+        let content = Content {
+            operations: content_ops,
+        };
         let content_bytes = content.encode().unwrap();
         let content_stream = Stream::new(Dictionary::new(), content_bytes);
         let content_id = doc.add_object(Object::Stream(content_stream));
@@ -272,7 +318,15 @@ doc.save(r'{}')
         let mut page_dict = Dictionary::new();
         page_dict.set("Type", Object::Name(b"Page".to_vec()));
         page_dict.set("Parent", Object::Reference(pages_id));
-        page_dict.set("MediaBox", Object::Array(vec![Object::Real(0.0), Object::Real(0.0), Object::Real(595.0), Object::Real(842.0)]));
+        page_dict.set(
+            "MediaBox",
+            Object::Array(vec![
+                Object::Real(0.0),
+                Object::Real(0.0),
+                Object::Real(595.0),
+                Object::Real(842.0),
+            ]),
+        );
         page_dict.set("Contents", Object::Reference(content_id));
 
         let mut font_dict = Dictionary::new();
@@ -323,7 +377,48 @@ doc.save(r'{}')
     assert!(!doc_xml.is_empty(), "word/document.xml should not be empty");
 
     // Verify that TOC entries do not collide in a single paragraph run like "4 (一)"
-    assert!(!doc_xml.contains("4 (一)"), "TOC lines should not collide together!");
+    assert!(
+        !doc_xml.contains("4 (一)"),
+        "TOC lines should not collide together!"
+    );
 
     let _ = fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+#[ignore = "manual only: scans real HOME and installed applications"]
+fn test_disk_cleaner_scan_and_capacity() {
+    use doc_tools_lib::disk_cleaner::{get_disk_capacity, scan_disk_clean_items};
+
+    let (total, free) = get_disk_capacity();
+    println!(
+        "Primary disk capacity: total = {} GB, free = {} GB",
+        total / (1024 * 1024 * 1024),
+        free / (1024 * 1024 * 1024)
+    );
+    assert!(total > 0, "Disk total capacity should be greater than zero");
+
+    let result = scan_disk_clean_items();
+    println!("Scanned items count: {}", result.items.len());
+    println!(
+        "Total scanned bytes: {} MB across {} files",
+        result.total_scanned_bytes / (1024 * 1024),
+        result.total_files
+    );
+
+    for item in &result.items {
+        println!(
+            " - [{:?}][{:?}] {}: {} MB ({} files)",
+            item.category,
+            item.risk_level,
+            item.name,
+            item.size_bytes / (1024 * 1024),
+            item.file_count
+        );
+    }
+
+    assert!(
+        !result.items.is_empty(),
+        "Should find at least one standard system clean item"
+    );
 }

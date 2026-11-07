@@ -8,15 +8,16 @@ const WORKFLOW_NAME: &str = "合并 PDF 与文档.workflow";
 pub fn check_status() -> IntegrationStatus {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
     let service_path = home.join("Library/Services").join(WORKFLOW_NAME);
-    let macos_service_installed = service_path.exists();
+    let macos_service_installed = cfg!(target_os = "macos") && service_path.exists();
 
     let ghostscript_available = crate::pdf_compress::check_ghostscript_available();
 
     let soffice_available = crate::pdf_convert::get_soffice_cmd().is_some();
 
-    let textutil_available = Path::new("/usr/bin/textutil").exists();
+    let textutil_available = cfg!(target_os = "macos") && Path::new("/usr/bin/textutil").exists();
 
     IntegrationStatus {
+        platform: std::env::consts::OS.to_string(),
         macos_service_installed,
         ghostscript_available,
         libreoffice_available: soffice_available,
@@ -42,7 +43,8 @@ pub fn install_macos_service() -> Result<String, String> {
             .map_err(|e| format!("写入 document.wflow 失败: {}", e))?;
 
         let info_plist_path = contents_dir.join("Info.plist");
-        let info_plist_content = generate_info_plist_named("合并 PDF 与文档", "com.doctools.service.quickmerge");
+        let info_plist_content =
+            generate_info_plist_named("合并 PDF 与文档", "com.doctools.service.quickmerge");
         fs::write(&info_plist_path, &info_plist_content)
             .map_err(|e| format!("写入 Info.plist 失败: {}", e))?;
 
@@ -53,13 +55,20 @@ pub fn install_macos_service() -> Result<String, String> {
         let _ = fs::write(contents2_dir.join("document.wflow"), &wflow_content);
         let _ = fs::write(
             contents2_dir.join("Info.plist"),
-            generate_info_plist_named("合并 PDF 与文档 (DocTools)", "com.doctools.service.quickmerge.legacy"),
+            generate_info_plist_named(
+                "合并 PDF 与文档 (DocTools)",
+                "com.doctools.service.quickmerge.legacy",
+            ),
         );
 
         // Read bundles into pbs
         let pbs_bin = "/System/Library/CoreServices/pbs";
-        let _ = Command::new(pbs_bin).args(["-read_bundle", &wf_dir.to_string_lossy()]).output();
-        let _ = Command::new(pbs_bin).args(["-read_bundle", &wf2_dir.to_string_lossy()]).output();
+        let _ = Command::new(pbs_bin)
+            .args(["-read_bundle", &wf_dir.to_string_lossy()])
+            .output();
+        let _ = Command::new(pbs_bin)
+            .args(["-read_bundle", &wf2_dir.to_string_lossy()])
+            .output();
 
         // Enable in pbs plist programmatically so NO manual checkbox in "自定..." is needed
         enable_services_in_pbs_plist();
@@ -71,9 +80,7 @@ pub fn install_macos_service() -> Result<String, String> {
         // Register and enable FinderSync Extension for seamless hover cascade menu
         let appex_path = "/Applications/DocTools.app/Contents/PlugIns/DocToolsFinderSync.appex";
         if Path::new(appex_path).exists() {
-            let _ = Command::new("pluginkit")
-                .args(["-a", appex_path])
-                .output();
+            let _ = Command::new("pluginkit").args(["-a", appex_path]).output();
             let _ = Command::new("pluginkit")
                 .args(["-e", "use", "-i", "com.doctools.desktop.FinderSync"])
                 .output();
@@ -115,32 +122,39 @@ pub fn uninstall_macos_service() -> Result<String, String> {
     }
 }
 
-pub fn generate_windows_reg(exe_path_opt: Option<&str>) -> String {
-    let exe_path = exe_path_opt.unwrap_or("C:\\\\Program Files\\\\DocTools\\\\DocTools.exe");
-    format!(
-        r#"Windows Registry Editor Version 5.00
-
-; ========================================================
-; DocTools Windows 右键菜单注册表文件
-; 支持所有文件以及文件夹右键唤起 DocTools
-; ========================================================
+pub fn generate_windows_reg(exe_path_opt: Option<&str>) -> Result<String, String> {
+    let path = match exe_path_opt {
+        Some(path) => path.to_string(),
+        None => {
+            #[cfg(target_os = "windows")]
+            { std::env::current_exe().map_err(|e| e.to_string())?.to_str()
+                .ok_or_else(|| "程序路径不是有效 Unicode".to_string())?.to_string() }
+            #[cfg(not(target_os = "windows"))]
+            { return Err("请在 Windows 安装后的程序中生成注册表配置".to_string()); }
+        }
+    };
+    if path.is_empty() || path.contains(['\r', '\n', '\0', '"']) {
+        return Err("无效的程序路径".to_string());
+    }
+    let escape = |value: &str| value.replace('\\', "\\\\").replace('"', "\\\"");
+    let icon = escape(&format!("\"{}\"", path));
+    let command = escape(&format!("\"{}\" \"%1\"", path));
+    Ok(format!(r#"Windows Registry Editor Version 5.00
 
 [HKEY_CURRENT_USER\Software\Classes\*\shell\DocToolsMerge]
 @="使用 DocTools 合并/处理"
-"Icon"="\"{exe}\""
+"Icon"="{icon}"
 
 [HKEY_CURRENT_USER\Software\Classes\*\shell\DocToolsMerge\command]
-@="\"{exe}\" \"%1\""
+@="{command}"
 
 [HKEY_CURRENT_USER\Software\Classes\Directory\shell\DocToolsMerge]
 @="在此文件夹打开 DocTools"
-"Icon"="\"{exe}\""
+"Icon"="{icon}"
 
 [HKEY_CURRENT_USER\Software\Classes\Directory\shell\DocToolsMerge\command]
-@="\"{exe}\" \"%1\""
-"#,
-        exe = exe_path
-    )
+@="{command}"
+"#).replace('\n', "\r\n"))
 }
 
 pub fn check_pending_action() -> Option<LaunchContext> {
@@ -151,7 +165,11 @@ pub fn check_pending_action() -> Option<LaunchContext> {
         if let Ok(content) = fs::read_to_string(&pending_file) {
             let _ = fs::remove_file(&pending_file);
             if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
-                let action = val.get("action").and_then(|a| a.as_str()).unwrap_or("merge").to_string();
+                let action = val
+                    .get("action")
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("merge")
+                    .to_string();
                 let paths: Vec<String> = val
                     .get("paths")
                     .and_then(|p| p.as_array())
@@ -210,18 +228,13 @@ fn generate_info_plist_named(title: &str, bundle_id: &str) -> String {
 			</dict>
 			<key>NSMessage</key>
 			<string>runWorkflowAsService</string>
-			<key>NSRequiredContext</key>
-			<dict>
-				<key>NSApplicationIdentifier</key>
-				<string>com.apple.finder</string>
-			</dict>
 			<key>NSSendFileTypes</key>
 			<array>
-				<string>com.adobe.pdf</string>
-				<string>public.image</string>
 				<string>public.item</string>
 				<string>public.data</string>
 				<string>public.content</string>
+				<string>com.adobe.pdf</string>
+				<string>public.image</string>
 				<string>org.openxmlformats.wordprocessingml.document</string>
 				<string>com.microsoft.word.doc</string>
 			</array>
@@ -271,9 +284,9 @@ active['DocTools: 合并与处理'] = True
 active['com.doctools.service.merge'] = True
 
 ordering = data.setdefault('FinderOrdering', {})
-max_idx = max(ordering.values()) if ordering else 0
-ordering['合并 PDF 与文档'] = max_idx + 1
-ordering['com.doctools.service.quickmerge'] = max_idx + 2
+# Priority 0 so it appears at the very top of Quick Actions
+ordering['合并 PDF 与文档'] = 0
+ordering['com.doctools.service.quickmerge'] = 0
 
 with open(pbs_path, 'wb') as f:
     plistlib.dump(data, f)
@@ -500,4 +513,30 @@ fi
 	</dict>
 </dict>
 </plist>"#.to_string()
+}
+
+#[cfg(test)]
+mod windows_reg_tests {
+    use super::generate_windows_reg;
+
+    #[test]
+    fn registry_uses_actual_path_and_escapes_values() {
+        let reg = generate_windows_reg(Some(r"D:\工具 项目\DocTools\doc-tools.exe")).unwrap();
+        assert!(reg.contains(r#"@="\"D:\\工具 项目\\DocTools\\doc-tools.exe\" \"%1\""#));
+        assert!(!reg.contains("Program Files"));
+        assert!(reg.contains("\r\n"));
+    }
+
+    #[test]
+    fn invalid_registry_paths_are_rejected() {
+        for path in ["", "C:\\bad\nfile.exe", "C:\\bad\"file.exe"] {
+            assert!(generate_windows_reg(Some(path)).is_err());
+        }
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn non_windows_cannot_generate_a_fake_installed_path() {
+        assert!(generate_windows_reg(None).is_err());
+    }
 }

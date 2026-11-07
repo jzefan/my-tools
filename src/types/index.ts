@@ -25,7 +25,7 @@ export interface QuickPath {
 export interface LaunchContext {
   initial_paths: string[];
   initial_directory: string;
-  initial_action: 'merge' | 'compress' | 'watermark' | 'convert' | 'browse';
+  initial_action: 'merge' | 'compress' | 'watermark' | 'convert' | 'paper' | 'browse';
 }
 
 export interface MergeItem {
@@ -38,6 +38,13 @@ export interface MergeItem {
 
 export interface MergeRequest {
   items: MergeItem[];
+  output_path: string;
+}
+
+export interface InsertPagesRequest {
+  target_pdf_path: string;
+  insert_items: MergeItem[];
+  insert_after_page: number; // 0 = start (before page 1), N = after page N
   output_path: string;
 }
 
@@ -90,6 +97,7 @@ export interface OperationResult {
 }
 
 export interface IntegrationStatus {
+  platform: string;
   macos_service_installed: boolean;
   ghostscript_available: boolean;
   libreoffice_available: boolean;
@@ -99,7 +107,16 @@ export interface IntegrationStatus {
 export interface ConvertItem {
   input_path: string;
   output_path?: string;
-  target_format: 'docx' | 'pdf' | 'auto';
+  target_format: 'docx' | 'pdf' | 'image' | 'png' | 'jpg' | 'auto';
+  page_range?: string;
+  dpi?: number;
+}
+
+export interface PdfToImageRequest {
+  input_path: string;
+  output_dir?: string;
+  format?: 'png' | 'jpg';
+  dpi?: number;
   page_range?: string;
 }
 
@@ -132,4 +149,35 @@ export interface ConvertEngineStatus {
   chrome_available: boolean;
   pages_available: boolean;
   word_available: boolean;
+  pdftoppm_available?: boolean;
+  fitz_available?: boolean;
+}
+
+export interface DocumentPreviewData {
+  path: string;
+  name: string;
+  extension: string;
+  size: number;
+  modified: number;
+  page_count?: number;
+  mime_type: string;
+  data_url?: string;
+  thumbnail_url?: string;
+  text_content?: string;
+  html_content?: string;
+  metadata?: {
+    width?: number;
+    height?: number;
+    aspect_ratio?: string;
+    title?: string;
+    author?: string;
+    subject?: string;
+    creator?: string;
+    producer?: string;
+    page_count?: number;
+    paragraph_count?: number;
+    word_count?: number;
+    character_count?: number;
+    [key: string]: any;
+  };
 }
