@@ -1,10 +1,16 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ArrowRight,
+  Calculator,
+  Copy,
+  ExternalLink,
   LayoutGrid,
-  PlusCircle,
+  ScanLine,
 } from 'lucide-react';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { SuiteConfig, SuiteId, ActiveTabId, getEnabledSuites } from '../../suites';
+import { ONLINE_MODULES, OnlineModule } from '../../suites/online';
+import { isTauriEnvironment } from '../../services/api';
 
 interface HomeViewProps {
   onEnterSuite: (suiteId: SuiteId, initialTab?: ActiveTabId) => void;
@@ -18,6 +24,31 @@ export const HomeView: React.FC<HomeViewProps> = ({
   compact = false,
 }) => {
   const enabledSuites = getEnabledSuites();
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  const copySearchName = async (item: Extract<OnlineModule, { kind: 'wechat' }>) => {
+    try {
+      await navigator.clipboard.writeText(item.searchName);
+    } catch {
+      const input = document.createElement('textarea');
+      input.value = item.searchName;
+      input.setAttribute('readonly', '');
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      input.remove();
+    }
+    setCopiedId(item.id);
+    window.setTimeout(() => {
+      setCopiedId((current) => (current === item.id ? null : current));
+    }, 1500);
+  };
+
+  const openLink = (event: React.MouseEvent<HTMLAnchorElement>, url: string) => {
+    if (!isTauriEnvironment()) return;
+    event.preventDefault();
+    void openUrl(url);
+  };
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 select-none">
@@ -84,7 +115,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   <p className="text-xs text-slate-400 dark:text-slate-500 leading-relaxed mb-4">
                     {suite.id === 'docs' && 'PDF 与文档合并、格式转换、智能压缩及水印清除'}
                     {suite.id === 'paper' && '文献研读、全文高亮批注、AI 学术问答与手稿工作台'}
-                    {suite.id === 'cleaner' && '目录占用、微信与 QQ 专清、缓存与系统瘦身'}
+                    {suite.id === 'cleaner' && '目录占用、微信与 QQ 清理、缓存与系统瘦身'}
                     {suite.id === 'netdisk' && '百度、阿里、夸克等网盘资源搜索与收藏'}
                     {suite.id === 'typing' && '边打字边记英语单词'}
                     {suite.id === 'media' && '多平台短视频与图文一键分发、账号矩阵与互动管理'}
@@ -119,18 +150,56 @@ export const HomeView: React.FC<HomeViewProps> = ({
               </div>
             );
           })}
-
-          {/* Future Modules Slot Placeholder */}
-          <div className="border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl p-5 flex flex-col items-center justify-center text-center text-slate-400 min-h-[200px] bg-slate-50/50 dark:bg-slate-900/30">
-            <PlusCircle className="w-8 h-8 text-slate-300 dark:text-slate-700 mb-2 stroke-1" />
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              更多工作台模块
-            </span>
-            <span className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
-              可继续扩展新功能套件
-            </span>
-          </div>
         </div>
+
+        <section className="mt-5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+          <div className="px-4 pt-3 pb-1 text-[11px] font-medium text-slate-400">在线</div>
+          <ul>
+            {ONLINE_MODULES.map((item) => {
+              const Icon = item.kind === 'wechat' ? ScanLine : Calculator;
+              return (
+                <li
+                  key={item.id}
+                  className="flex items-center gap-3 px-4 py-2.5 border-t border-slate-100 dark:border-slate-800"
+                >
+                  <Icon className="w-4 h-4 shrink-0 text-slate-400" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">
+                      {item.name}
+                      {item.kind === 'wechat' && (
+                        <span className="ml-1.5 text-[11px] font-normal text-slate-400">小程序</span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-slate-400 truncate">
+                      {item.kind === 'wechat' ? `微信搜索「${item.searchName}」` : item.url.replace(/^https:\/\//, '')}
+                    </div>
+                  </div>
+                  {item.kind === 'wechat' ? (
+                    <button
+                      type="button"
+                      onClick={() => void copySearchName(item)}
+                      className="titlebar-nodrag shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                    >
+                      <Copy className="w-3 h-3" />
+                      {copiedId === item.id ? '已复制' : '复制'}
+                    </button>
+                  ) : (
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(event) => openLink(event, item.url)}
+                      className="titlebar-nodrag shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                      打开
+                    </a>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
       </div>
     </div>
   );

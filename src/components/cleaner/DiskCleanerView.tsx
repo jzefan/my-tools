@@ -50,7 +50,9 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
   } | null>(null);
 
   // Filter category
-  const [filterCategory, setFilterCategory] = useState<'all' | 'safe_only' | CleanCategory>('all');
+  const [filterCategory, setFilterCategory] = useState<
+    'all' | 'safe_only' | 'system_bundle' | CleanCategory
+  >('all');
 
   // Trigger scan
   const handleScan = useCallback(async () => {
@@ -125,7 +127,7 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
     } else if (activeSubTab === 'cleaner_developer') {
       setFilterCategory('developer');
     } else if (activeSubTab === 'cleaner_system') {
-      setFilterCategory('system_logs');
+      setFilterCategory('system_bundle');
     } else {
       setFilterCategory('all');
     }
@@ -279,6 +281,13 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
     return scanResult.items.filter((item) => {
       if (filterCategory === 'all') return true;
       if (filterCategory === 'safe_only') return item.risk_level === 'safe';
+      if (filterCategory === 'system_bundle') {
+        return (
+          item.category === 'system_logs' ||
+          item.category === 'app_cache' ||
+          item.category === 'trash'
+        );
+      }
       return item.category === filterCategory;
     });
   }, [scanResult, filterCategory]);
@@ -539,7 +548,7 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
                   : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
-              微信专清
+              微信清理
             </button>
             <button
               type="button"
@@ -550,7 +559,7 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
                   : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
               }`}
             >
-              QQ 专清
+              QQ 清理
             </button>
             <button
               type="button"
@@ -621,7 +630,7 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
         {isScanning && !scanResult && (
           <div className="h-64 flex flex-col items-center justify-center text-xs text-slate-400 space-y-2">
             <RefreshCw className="w-5 h-5 text-indigo-500 animate-spin" />
-            <span>正在快速扫描系统垃圾与微信/QQ缓存...</span>
+            <span>正在扫描缓存与微信/QQ...</span>
           </div>
         )}
 

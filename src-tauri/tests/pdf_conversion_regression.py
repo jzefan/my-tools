@@ -108,5 +108,83 @@ class ConversionRegression(unittest.TestCase):
             else:
                 self.assertIn('图片未保留', run.stderr.decode())
 
+    def test_chinese_pinyin_table_fidelity_and_zero_truncation(self):
+        pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
+        with tempfile.TemporaryDirectory(prefix='doc-tools-pinyin-') as directory:
+            directory = Path(directory)
+            source, output = directory / 'pinyin.pdf', directory / 'pinyin.docx'
+            style = getSampleStyleSheet()['Normal']
+            style.fontName = 'STSong-Light'
+
+            # 类似原图的无边框生字与拼音排版
+            data = [
+                [Paragraph('第1课', style), Paragraph('食盐(yán)', style), Paragraph('薄雾(bó)', style), Paragraph('隆重(lóng)', style)],
+                [Paragraph('', style), Paragraph('浩荡(hào)', style), Paragraph('山崩地裂(bēng)', style), Paragraph('霎时(shà)', style)],
+                [Paragraph('第2课', style), Paragraph('半明半昧(mèi)', style), Paragraph('摇摇欲坠(zhuì)', style), Paragraph('萤火虫(yíng)', style)],
+            ]
+            table = Table(data, colWidths=[80, 100, 130, 100])
+            # 无任何边框样式（忠于原文的无框多列对齐）
+            table.setStyle(TableStyle([
+                ('FONTNAME', (0, 0), (-1, -1), 'STSong-Light'),
+            ]))
+
+            SimpleDocTemplate(str(source)).build([
+                Paragraph('四年级上册第一单元知识点 - 字音', style),
+                table,
+            ])
+
+            subprocess.run([sys.executable, '-c', SCRIPT, str(source), str(output), '1'], check=True, capture_output=True, timeout=60)
+            result = Document(output)
+            self.assertTrue(result.tables)
+            docx_tbl = result.tables[0]
+            
+            # 1. 忠于原文：无边框排版转换后，表格边框全部设为 none，绝不凭空出现多余边框网格线
+            from docx.oxml.ns import qn
+            tbl_borders = docx_tbl._tbl.tblPr.xpath('./w:tblBorders')
+            self.assertTrue(tbl_borders, 'tblBorders 应显式存在以抑制 Word 默认网格')
+            for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+                edge_node = tbl_borders[0].find(qn(f'w:{edge}'))
+                self.assertIsNotNone(edge_node, f'{edge} 边框节点应存在')
+                self.assertEqual(edge_node.get(qn('w:val')), 'none', f'{edge} 边框必须为 none')
+
+            # 2. 彻底杜绝文字截断：行高不得为 exact，必须为 atLeast 自适应撑开
+            for row in docx_tbl.rows:
+                for th in row._tr.xpath('.//w:trHeight'):
+                    self.assertEqual(th.get(qn('w:hRule')), 'atLeast', '行高规则必须为 atLeast，避免文字被腰斩截断')
+                # 检查单元格内段落行距不得为 exact 截断
+                for cell in row.cells:
+                    for sp in cell._tc.xpath('.//w:spacing'):
+                        self.assertNotEqual(sp.get(qn('w:lineRule')), 'exact', '单元格内段落行距不得为 exact，防止拼音和汉字被削掉')
+
+            # 3. 验证生字和带声调拼音文本完整保留
+            text_xml = result.part.element.xml
+            self.assertIn('食盐', text_xml)
+            self.assertIn('山崩地裂', text_xml)
+            self.assertIn('摇摇欲坠', text_xml)
+
+    def test_bordered_table_retains_borders(self):
+        with tempfile.TemporaryDirectory(prefix='doc-tools-bordered-') as directory:
+            directory = Path(directory)
+            source, output = directory / 'bordered.pdf', directory / 'bordered.docx'
+            styles = getSampleStyleSheet()
+            table = Table([['A1', 'B1'], ['A2', 'B2']], colWidths=[100, 100])
+            table.setStyle(TableStyle([('GRID', (0, 0), (-1, -1), 1, (0, 0, 0))]))
+            SimpleDocTemplate(str(source)).build([table])
+
+            subprocess.run([sys.executable, '-c', SCRIPT, str(source), str(output), '1'], check=True, capture_output=True, timeout=60)
+            result = Document(output)
+            all_tbls = result.element.body.xpath('.//w:tbl')
+            self.assertTrue(all_tbls)
+            from docx.oxml.ns import qn
+            # 找到含有 A1 的数据表格
+            data_tbl = next(tbl for tbl in all_tbls if 'A1' in tbl.xml)
+            # 真实边框表格保留边框，单元格边框不为 none
+            cell_borders = data_tbl.xpath('./w:tr/w:tc/w:tcPr/w:tcBorders/*')
+            self.assertTrue(cell_borders, '带框表格应保留单元格边框')
+            for b in cell_borders:
+                val = b.get(qn('w:val'))
+                if val:
+                    self.assertNotEqual(val.lower(), 'none')
+
 if __name__ == '__main__':
     unittest.main()

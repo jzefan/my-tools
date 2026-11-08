@@ -64,6 +64,12 @@ export async function renderPaperDocx(bytes: Uint8Array): Promise<HTMLElement> {
     const grid = byName(node, 'tblGrid'), widths = grid ? Array.from(grid.children).map(col => Number(val(col, 'w')) || 1) : [];
     const sum = widths.reduce((total, width) => total + width, 0);
     if (sum) { const cols = document.createElement('colgroup'); widths.forEach(width => { const col = document.createElement('col'); col.style.width = `${width * 100 / sum}%`; cols.append(col); }); result.append(cols); }
+    const tblPr = byName(node, 'tblPr'), tblBorders = tblPr && byName(tblPr, 'tblBorders');
+    const hasTblBorder = tblBorders ? Array.from(tblBorders.children).some(b => {
+      const v = val(b);
+      const sz = Number(val(b, 'sz')) || 0;
+      return v && !['none', 'nil'].includes(v.toLowerCase()) && sz > 0;
+    }) : false;
     const merges = new Map<number, HTMLTableCellElement>();
     for (const row of Array.from(node.children).filter(child => child.localName === 'tr')) {
       const tr = document.createElement('tr'); let column = 0;
@@ -74,8 +80,15 @@ export async function renderPaperDocx(bytes: Uint8Array): Promise<HTMLElement> {
           const previous = merges.get(column)!; previous.rowSpan += 1; column += span; continue;
         }
         for (let index = column; index < column + span; index++) merges.delete(index);
+        const tcBorders = properties && byName(properties, 'tcBorders');
+        const hasTcBorder = tcBorders ? Array.from(tcBorders.children).some(b => {
+          const v = val(b);
+          const sz = Number(val(b, 'sz')) || 0;
+          return v && !['none', 'nil'].includes(v.toLowerCase()) && sz > 0;
+        }) : false;
+        const isBordered = hasTcBorder || (hasTblBorder && !tcBorders);
         const td = document.createElement('td'); td.colSpan = span;
-        td.style.cssText = 'border:1px solid #cbd5e1;padding:7px;overflow-wrap:anywhere;vertical-align:top';
+        td.style.cssText = `${isBordered ? 'border:1px solid #cbd5e1;padding:7px;' : 'border:none;padding:4px 8px;'}overflow-wrap:anywhere;vertical-align:top`;
         const fill = properties && val(byName(properties, 'shd'), 'fill'); if (fill && /^[0-9a-f]{6}$/i.test(fill)) td.style.backgroundColor = `#${fill}`;
         const align = properties && val(byName(properties, 'vAlign')); if (align === 'center' || align === 'bottom') td.style.verticalAlign = align === 'center' ? 'middle' : 'bottom';
         for (const child of cell.children) {

@@ -142,7 +142,7 @@ export const CLEANER_SUITE: SuiteConfig = {
     },
     {
       id: 'cleaner_wechat',
-      label: '微信专清',
+      label: '微信清理',
       sublabel: '网页内核、朋友圈流媒体',
       icon: MessageCircle,
       color: 'text-emerald-500',
@@ -150,7 +150,7 @@ export const CLEANER_SUITE: SuiteConfig = {
     },
     {
       id: 'cleaner_qq',
-      label: 'QQ 专清',
+      label: 'QQ 清理',
       sublabel: '渲染缓存、表情包缩略图',
       icon: MessageSquare,
       color: 'text-blue-500',
@@ -159,15 +159,15 @@ export const CLEANER_SUITE: SuiteConfig = {
     {
       id: 'cleaner_developer',
       label: '开发者缓存',
-      sublabel: 'Xcode、Node、Homebrew',
+      sublabel: 'Xcode、Node、Rust、Expo',
       icon: Code2,
       color: 'text-amber-500',
       activeBg: 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800',
     },
     {
       id: 'cleaner_system',
-      label: '系统与应用日志',
-      sublabel: '通用缓存、崩溃报告、废纸篓',
+      label: '系统与应用缓存',
+      sublabel: '通用缓存、日志、废纸篓',
       icon: HardDrive,
       color: 'text-slate-500',
       activeBg: 'bg-slate-100 dark:bg-slate-800/60 text-slate-900 dark:text-slate-100 border-slate-200 dark:border-slate-700',
@@ -287,10 +287,10 @@ export const MEDIA_SUITE: SuiteConfig = {
 
 export const ALL_SUITES: SuiteConfig[] = [
   DOCS_SUITE,
-  PAPER_SUITE,
   CLEANER_SUITE,
   NETDISK_SUITE,
   TYPING_SUITE,
+  PAPER_SUITE,
   MEDIA_SUITE,
 ];
 

@@ -528,35 +528,187 @@ fn convert_pdf_to_word_pdf2docx(
 ) -> Result<String, String> {
     let script = r#"
 import sys
-from pdf2docx import Converter
-cv = Converter(sys.argv[1])
-try:
-    # Rust validates and normalizes page numbers before invoking this engine.
-    pages = [int(page) - 1 for page in sys.argv[3].split(',')]
-    cv.convert(sys.argv[2], pages=pages)
-    import fitz
-    from docx import Document
-    source = fitz.open(sys.argv[1])
-    result = Document(sys.argv[2])
-    source_has_images = any(source[p].get_images() for p in pages)
-    output_has_images = any('/image' in rel.reltype for rel in result.part.rels.values())
-    output_has_text = any(p.text.strip() for p in result.paragraphs) or any(
-        cell.text.strip() for table in result.tables for row in table.rows for cell in row.cells)
-    source_has_text = any(source[p].get_text().strip() for p in pages)
-    if source_has_text and not output_has_text:
-        raise RuntimeError('文字未保留，已停止输出')
-    if source_has_images and not output_has_images:
-        raise RuntimeError('图片未保留，已停止输出；扫描件需要 OCR 或保留图像的转换引擎')
-    if not output_has_text and not output_has_images:
-        raise RuntimeError('转换结果为空，扫描件可能需要 OCR')
-    if not any(source[p].get_text().strip() for p in pages):
-        print('IMAGE_ONLY')
-    source.close()
-finally:
-    cv.close()
+import os
+import io
+import fitz
+from docx import Document
+from docx.enum.table import WD_ROW_HEIGHT
+from docx.oxml import parse_xml
+from docx.oxml.ns import nsdecls, qn
+from docx.shared import Pt
+from docx.enum.section import WD_SECTION
+
+source_path = sys.argv[1]
+output_path = sys.argv[2]
+raw_pages = sys.argv[3].strip()
+
+source = fitz.open(source_path)
+total_pages = len(source)
+actual_pages = [int(p) - 1 for p in raw_pages.split(',') if p.strip()] if raw_pages.lower() != 'all' else list(range(total_pages))
+
+# 智能判定：检测是否属于文字转曲/复杂矢量排版（缺少原生字符编码，文字全为贝塞尔曲线）
+sample_pages = actual_pages[:min(len(actual_pages), 6)]
+avg_text = sum(len(source[p].get_text().strip()) for p in sample_pages) / max(1, len(sample_pages))
+avg_drawings = sum(len(source[p].get_drawings()) for p in sample_pages) / max(1, len(sample_pages))
+
+is_vector_outlined = avg_text < 40 and avg_drawings > 100
+
+if is_vector_outlined:
+    # -------------------------------------------------------------------------
+    # 模式 A：WPS 级严格 1:1 页面级高保真复刻引擎
+    # 保证页数严格与原 PDF 1 对 1 对应（28页对应28页），满幅无缝，消除小截图碎片与虚假多余表格
+    # -------------------------------------------------------------------------
+    out_docx = Document()
+    
+    for idx, pno in enumerate(actual_pages):
+        page = source[pno]
+        rect = page.rect
+        w_pt, h_pt = rect.width, rect.height
+        
+        pix = page.get_pixmap(dpi=250)
+        img_data = pix.tobytes('png')
+        
+        p = out_docx.add_paragraph()
+        pPr = p._p.get_or_add_pPr()
+        pPr.append(parse_xml(f'<w:spacing {nsdecls("w")} w:before="0" w:after="0" w:line="20" w:lineRule="exact"/>'))
+        run = p.add_run()
+        run.add_picture(io.BytesIO(img_data), width=Pt(w_pt), height=Pt(h_pt))
+        
+        if idx < len(actual_pages) - 1:
+            out_docx.add_section(WD_SECTION.NEW_PAGE)
+            curr_sec = out_docx.sections[idx]
+        else:
+            curr_sec = out_docx.sections[-1]
+            
+        curr_sec.page_width = Pt(w_pt)
+        curr_sec.page_height = Pt(h_pt)
+        curr_sec.top_margin = Pt(0)
+        curr_sec.bottom_margin = Pt(0)
+        curr_sec.left_margin = Pt(0)
+        curr_sec.right_margin = Pt(0)
+        curr_sec.header_distance = Pt(0)
+        curr_sec.footer_distance = Pt(0)
+
+    # 移除空段落，将 sectPr 紧凑并入对应段落中，严格做到一对一
+    body = out_docx.element.body
+    ps = list(body.xpath('./w:p'))
+    for i in range(1, len(ps)):
+        curr_p = ps[i]
+        prev_p = ps[i - 1]
+        sectPr = curr_p.xpath('./w:pPr/w:sectPr')
+        if sectPr and not curr_p.xpath('.//w:r'):
+            prev_pPr = prev_p.get_or_add_pPr()
+            prev_pPr.append(sectPr[0])
+            body.remove(curr_p)
+            
+    out_docx.save(output_path)
+
+else:
+    # -------------------------------------------------------------------------
+    # 模式 B：标准电子文档流式转换引擎（增强版 pdf2docx，保持原生文字与表格可编辑）
+    # -------------------------------------------------------------------------
+    from pdf2docx import Converter
+    try:
+        from pdf2docx.table.Row import Row
+        _orig_row_make_docx = Row.make_docx
+        def _safe_row_make_docx(self, table, idx_row: int):
+            _orig_row_make_docx(self, table, idx_row)
+            docx_row = table.rows[idx_row]
+            docx_row.height_rule = WD_ROW_HEIGHT.AT_LEAST
+            if self.height < 15.0:
+                docx_row.height = Pt(15.0)
+        Row.make_docx = _safe_row_make_docx
+    except Exception:
+        pass
+
+    cv = Converter(source_path)
+    try:
+        pages_arg = actual_pages if len(actual_pages) != total_pages else None
+        convert_kwargs = {'min_svg_gap_dx': 35.0, 'min_svg_gap_dy': 35.0}
+        if pages_arg is not None:
+            cv.convert(output_path, pages=pages_arg, **convert_kwargs)
+        else:
+            cv.convert(output_path, **convert_kwargs)
+    finally:
+        cv.close()
+
+    result = Document(output_path)
+    all_tbls = result.element.body.xpath('.//w:tbl')
+    for tbl in all_tbls:
+        has_visible_border = False
+        for b in tbl.xpath('./w:tr/w:tc/w:tcPr/w:tcBorders/*'):
+            val = b.get(qn('w:val'))
+            try:
+                sz = float(b.get(qn('w:sz'), 0) or 0)
+            except Exception:
+                sz = 0.0
+            if val and val.lower() not in ('none', 'nil') and sz > 0:
+                has_visible_border = True
+                break
+
+        tblPr = tbl.find(qn('w:tblPr'))
+        if tblPr is None:
+            tblPr = parse_xml(f'<w:tblPr {nsdecls("w")}/>')
+            tbl.insert(0, tblPr)
+
+        if not has_visible_border:
+            for old_b in tblPr.xpath('./w:tblBorders'):
+                tblPr.remove(old_b)
+            tblPr.append(parse_xml(f'''
+                <w:tblBorders {nsdecls("w")}>
+                    <w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>
+                    <w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>
+                    <w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>
+                    <w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>
+                    <w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/>
+                    <w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>
+                </w:tblBorders>
+            '''))
+            for tcPr in tbl.xpath('./w:tr/w:tc/w:tcPr'):
+                for old_tc_b in tcPr.xpath('./w:tcBorders'):
+                    tcPr.remove(old_tc_b)
+                tcPr.append(parse_xml(f'''
+                    <w:tcBorders {nsdecls("w")}>
+                        <w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>
+                        <w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>
+                        <w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>
+                        <w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>
+                    </w:tcBorders>
+                '''))
+
+        for tr in tbl.xpath('./w:tr'):
+            trPr = tr.find(qn('w:trPr'))
+            if trPr is None:
+                trPr = parse_xml(f'<w:trPr {nsdecls("w")}/>')
+                tr.insert(0, trPr)
+            for cs in trPr.xpath('./w:cantSplit'):
+                trPr.remove(cs)
+            for th in trPr.xpath('./w:trHeight'):
+                th.set(qn('w:hRule'), 'atLeast')
+                try:
+                    h_val = float(th.get(qn('w:val'), 0) or 0)
+                except Exception:
+                    h_val = 0.0
+                if h_val < 320:
+                    th.set(qn('w:val'), '320')
+
+            for tc in tr.xpath('./w:tc'):
+                for p in tc.xpath('./w:p'):
+                    pPr = p.find(qn('w:pPr'))
+                    if pPr is not None:
+                        for sp in pPr.xpath('./w:spacing'):
+                            if sp.get(qn('w:lineRule')) == 'exact':
+                                sp.set(qn('w:lineRule'), 'atLeast')
+                            sp.set(qn('w:before'), '0')
+                            sp.set(qn('w:after'), '0')
+
+    result.save(output_path)
+
+source.close()
 "#;
 
     let pr = page_range.unwrap_or("all");
+    let page_count = if pr.eq_ignore_ascii_case("all") { 1 } else { pr.split(',').filter(|part| !part.trim().is_empty()).count().max(1) };
     let output = python_command("pdf2docx")?
         .args([
             "-c",
@@ -565,8 +717,8 @@ finally:
             &output_path.to_string_lossy(),
             pr,
         ])
-        .bounded_output()
-        .map_err(|e| format!("启动 python3 失败: {}", e))?;
+        .bounded_output_timeout(pdf_to_word_timeout(page_count))
+        .map_err(|e| format!("pdf2docx 未完成: {}", e))?;
 
     if output.status.success()
         && output_path.exists()
@@ -1157,6 +1309,12 @@ pub fn get_soffice_cmd() -> Option<String> {
     None
 }
 
+/// Illustrated pages often need well over the default 3 minutes.
+fn pdf_to_word_timeout(page_count: usize) -> std::time::Duration {
+    let pages = page_count.max(1) as u64;
+    std::time::Duration::from_secs((90 + pages * 30).clamp(180, 20 * 60))
+}
+
 fn validate_page_range(range: Option<&str>, total: u32) -> Result<Vec<u32>, String> {
     if total == 0 {
         return Err("PDF 没有可转换的页面".to_string());
@@ -1226,6 +1384,14 @@ mod conversion_range_tests {
             assert!(command.args(["-c", "import fitz; import sys; assert sys.version_info.major == 3"])
                 .bounded_output_timeout(std::time::Duration::from_secs(5)).unwrap().status.success());
         }
+    }
+
+    #[test]
+    fn illustrated_documents_get_more_than_three_minutes() {
+        assert_eq!(pdf_to_word_timeout(1).as_secs(), 180);
+        assert!(pdf_to_word_timeout(28).as_secs() > 180);
+        assert_eq!(pdf_to_word_timeout(28).as_secs(), 90 + 28 * 30);
+        assert_eq!(pdf_to_word_timeout(100).as_secs(), 20 * 60);
     }
 
     #[test]

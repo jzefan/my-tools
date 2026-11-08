@@ -1,5 +1,5 @@
 import { getPathBasename } from '../utils/format';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ArrowLeftRight,
   FileText,
@@ -67,6 +67,7 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
   const [result, setResult] = useState<ConvertResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const outcomeRef = useRef<HTMLDivElement>(null);
 
   // Lazy toggle and fetch engine status only when requested by user
   const handleToggleEngineInfo = async () => {
@@ -279,12 +280,14 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
       }
 
       setResult(res);
+      requestAnimationFrame(() => outcomeRef.current?.scrollIntoView({ block: 'nearest' }));
     } catch (err: any) {
       const elapsed = Date.now() - startTime;
       if (elapsed < 500) {
         await new Promise((resolve) => setTimeout(resolve, 500 - elapsed));
       }
       setErrorMessage(typeof err === 'string' ? err : err?.message || '转换过程中发生异常');
+      requestAnimationFrame(() => outcomeRef.current?.scrollIntoView({ block: 'nearest' }));
     } finally {
       setIsConverting(false);
     }
@@ -677,11 +680,19 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
                 <OperationStatusBanner
                   status="loading"
                   loadingLabel={`正在转换文档（共 ${queue.length} 个）...`}
-                  loadingSublabel="正在处理文档格式与版面"
+                  loadingSublabel="带图文档可能需要几分钟"
                   accentColor="blue"
                   pixelVariant="Drive"
                 />
               </div>
+            )}
+            {!isConverting && errorMessage && (
+              <p className="pt-2 text-xs text-red-600 dark:text-red-400 break-words">{errorMessage}</p>
+            )}
+            {!isConverting && result?.results.some((item) => !item.success) && (
+              <p className="pt-2 text-xs text-red-600 dark:text-red-400 break-words">
+                {result.results.find((item) => !item.success)?.message}
+              </p>
             )}
 
             {/* Action Button */}
@@ -699,7 +710,7 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
                 ) : (
                   <>
                     <ArrowLeftRight className="w-4 h-4" />
-                    <span>开始转换（${queue.length} 个文件）</span>
+                    <span>{`开始转换（${queue.length} 个文件）`}</span>
                   </>
                 )}
               </button>
@@ -707,6 +718,7 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
           </div>
         )}
 
+        <div ref={outcomeRef} className="scroll-mt-4" />
         {/* Error notification */}
         {errorMessage && (
           <OperationStatusBanner

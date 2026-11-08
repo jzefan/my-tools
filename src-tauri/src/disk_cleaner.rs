@@ -16,8 +16,8 @@ pub enum RiskLevel {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum CleanCategory {
-    Wechat,     // 微信专清
-    Qq,         // QQ 专清
+    Wechat,     // 微信清理
+    Qq,         // QQ 清理
     Browser,    // 浏览器缓存
     Developer,  // 开发者工具缓存
     SystemLogs, // 系统日志与崩溃报告
@@ -79,6 +79,18 @@ pub struct CleanExecutionResult {
     pub success: bool,
 }
 
+/// How a rule discovers delete targets under the home directory.
+enum RuleScope {
+    /// Expand `sub_paths`; delete children of each existing root.
+    Paths,
+    /// Expand `sub_paths`; delete immediate children, skipping `excludes`.
+    DirChildren(&'static [&'static str]),
+    /// `~/Library/Application Support/<App>/{Cache, Code Cache, ...}`
+    AppSupportLeaves,
+    /// Files directly under `$HOME` whose name starts with the prefix.
+    HomeFiles(&'static str),
+}
+
 struct RuleDefinition {
     id: &'static str,
     name: &'static str,
@@ -86,18 +98,59 @@ struct RuleDefinition {
     risk_level: RiskLevel,
     description: &'static str,
     default_selected: bool,
-    // Relative paths from user home directory
+    /// Relative paths from user home directory (`*` = one directory level).
     sub_paths: &'static [&'static str],
+    scope: RuleScope,
 }
 
+const APP_SUPPORT_LEAF_NAMES: &[&str] = &[
+    "Cache",
+    "Code Cache",
+    "GPUCache",
+    "DawnCache",
+    "DawnWebGPUCache",
+    "GraphiteDawnCache",
+    "ShaderCache",
+    "GrShaderCache",
+    "Crashpad",
+    "CachedData",
+];
+
+/// Top-level `Library/Caches` names owned by more specific browser/dev rules.
+const LIBRARY_CACHES_EXCLUDES: &[&str] = &[
+    "Google",
+    "Microsoft Edge",
+    "BraveSoftware",
+    "Homebrew",
+    "pnpm",
+    "Yarn",
+    "pip",
+    "com.apple.Safari",
+];
+
+/// Large model / env stores under `~/.cache` that should not be swept blindly.
+/// `node` is owned by `bun_corepack_cache`.
+const DOT_CACHE_EXCLUDES: &[&str] = &[
+    "huggingface",
+    "huggingface-cli",
+    "torch",
+    "whisper",
+    "llama.cpp",
+    "gpt4all",
+    "ollama",
+    "mlx",
+    "models",
+    "node",
+];
+
 const CLEAN_RULES: &[RuleDefinition] = &[
-    // --- 微信专清 ---
+    // --- 微信清理 ---
     RuleDefinition {
         id: "wechat_webkit_cache",
         name: "微信网页内核缓存",
         category: CleanCategory::Wechat,
         risk_level: RiskLevel::Safe,
-        description: "微信内置网页内核与小程序引擎渲染缓存，清理后按需重建",
+        description: "内置网页与小程序渲染缓存",
         default_selected: true,
         sub_paths: &[
             "Library/Containers/com.tencent.xinWeChat/Data/Library/Caches",
@@ -106,49 +159,53 @@ const CLEAN_RULES: &[RuleDefinition] = &[
             "Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/GPUCache",
             "Library/Containers/com.tencent.xinWeChat.WeChatMacShare/Data/Library/Caches",
         ],
+        scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "wechat_timeline_stream",
         name: "微信朋友圈与流媒体缓存",
         category: CleanCategory::Wechat,
         risk_level: RiskLevel::Safe,
-        description: "朋友圈、公众号图文与短视频临时播放缓存，清理临时播放与缩略图缓存",
+        description: "朋友圈、公众号与短视频临时缓存",
         default_selected: true,
         sub_paths: &[
             "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/*/cache",
         ],
+        scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "wechat_group_container_cache",
         name: "微信共享群组缓存",
         category: CleanCategory::Wechat,
         risk_level: RiskLevel::Safe,
-        description: "微信主程序与系统扩展组件间共享的数据缓存",
+        description: "主程序与扩展共享缓存",
         default_selected: true,
         sub_paths: &[
             "Library/Group Containers/5A4RE8SF68.com.tencent.xinWeChat/Library/Caches",
             "Library/Group Containers/5A4RE8SF68.com.tencent.xinWeChat/Library/WebKit",
         ],
+        scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "wechat_temp_preview",
-        name: "微信接收文件临时预览副本",
+        name: "微信接收文件临时预览",
         category: CleanCategory::Wechat,
         risk_level: RiskLevel::Recommended,
-        description: "在微信中双击预览文档或视频时生成的系统临时副本",
+        description: "预览文档/视频时的临时副本",
         default_selected: true,
         sub_paths: &[
             "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/*/temp",
             "Library/Containers/com.tencent.xinWeChat/Data/tmp",
         ],
+        scope: RuleScope::Paths,
     },
-    // --- QQ 专清 ---
+    // --- QQ 清理 ---
     RuleDefinition {
         id: "qq_engine_cache",
         name: "QQ 核心渲染与代码缓存",
         category: CleanCategory::Qq,
         risk_level: RiskLevel::Safe,
-        description: "QQ NT 架构的 GPU 渲染缓存、代码编译缓存与崩溃日志",
+        description: "GPU、代码缓存与崩溃转储",
         default_selected: true,
         sub_paths: &[
             "Library/Containers/com.tencent.qq/Data/Library/Caches",
@@ -159,30 +216,33 @@ const CLEAN_RULES: &[RuleDefinition] = &[
             "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/blob_storage",
             "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/Shared Dictionary",
         ],
+        scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "qq_emoji_stickers",
         name: "QQ 表情包与缩略图缓存",
         category: CleanCategory::Qq,
         risk_level: RiskLevel::Safe,
-        description: "聊天表情包、头像与临时多媒体缩略图，清理后自动按需拉取",
+        description: "表情、头像与缩略图",
         default_selected: true,
         sub_paths: &[
             "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/global/nt_data/Emoji",
         ],
+        scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "qq_temp_files",
         name: "QQ 临时运行文件与预览",
         category: CleanCategory::Qq,
         risk_level: RiskLevel::Recommended,
-        description: "QQ 运行期间生成的临时下载交换文件与多媒体预览流",
+        description: "临时交换文件与预览流",
         default_selected: true,
         sub_paths: &[
             "Library/Containers/com.tencent.qq/Data/tmp",
             "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/global/nt_temp",
             "Library/Containers/com.tencent.qqexdoc/Data/Library/Caches",
         ],
+        scope: RuleScope::Paths,
     },
     // --- 浏览器缓存 ---
     RuleDefinition {
@@ -190,88 +250,159 @@ const CLEAN_RULES: &[RuleDefinition] = &[
         name: "Google Chrome 浏览缓存",
         category: CleanCategory::Browser,
         risk_level: RiskLevel::Safe,
-        description: "网页图片、脚本与静态资源缓存，清理不影响书签与登录密码",
+        description: "各配置文件网页与 GPU 缓存",
         default_selected: true,
         sub_paths: &[
-            "Library/Caches/Google/Chrome/Default/Cache",
-            "Library/Caches/Google/Chrome/Default/Code Cache",
-            "Library/Caches/Google/Chrome/Default/GPUCache",
+            "Library/Caches/Google/Chrome/*/Cache",
+            "Library/Caches/Google/Chrome/*/Code Cache",
+            "Library/Caches/Google/Chrome/*/GPUCache",
         ],
+        scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "edge_cache",
         name: "Microsoft Edge 浏览缓存",
         category: CleanCategory::Browser,
         risk_level: RiskLevel::Safe,
-        description: "Edge 浏览器网页静态缓存与 GPU 渲染缓存",
+        description: "各配置文件网页与 GPU 缓存",
         default_selected: true,
         sub_paths: &[
-            "Library/Caches/Microsoft Edge/Default/Cache",
-            "Library/Caches/Microsoft Edge/Default/Code Cache",
-            "Library/Caches/Microsoft Edge/Default/GPUCache",
+            "Library/Caches/Microsoft Edge/*/Cache",
+            "Library/Caches/Microsoft Edge/*/Code Cache",
+            "Library/Caches/Microsoft Edge/*/GPUCache",
         ],
+        scope: RuleScope::Paths,
+    },
+    RuleDefinition {
+        id: "brave_cache",
+        name: "Brave 浏览缓存",
+        category: CleanCategory::Browser,
+        risk_level: RiskLevel::Safe,
+        description: "各配置文件网页与 GPU 缓存",
+        default_selected: true,
+        sub_paths: &[
+            "Library/Caches/BraveSoftware/Brave-Browser/*/Cache",
+            "Library/Caches/BraveSoftware/Brave-Browser/*/Code Cache",
+            "Library/Caches/BraveSoftware/Brave-Browser/*/GPUCache",
+        ],
+        scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "safari_cache",
         name: "Safari 浏览缓存",
         category: CleanCategory::Browser,
         risk_level: RiskLevel::Safe,
-        description: "苹果原生 Safari 浏览器的图片与网页资源临时缓存",
+        description: "Safari 网页资源缓存",
         default_selected: true,
         sub_paths: &[
             "Library/Caches/com.apple.Safari",
             "Library/Containers/com.apple.Safari/Data/Library/Caches",
         ],
+        scope: RuleScope::Paths,
     },
-    // --- 开发者工具垃圾 ---
+    RuleDefinition {
+        id: "google_updater_cache",
+        name: "GoogleUpdater 组件缓存",
+        category: CleanCategory::Browser,
+        risk_level: RiskLevel::Safe,
+        description: "Chrome 组件更新 CRX 缓存",
+        default_selected: true,
+        sub_paths: &["Library/Application Support/Google/GoogleUpdater/crx_cache"],
+        scope: RuleScope::Paths,
+    },
+    // --- 开发者工具 ---
     RuleDefinition {
         id: "xcode_derived_data",
-        name: "Xcode 编译衍生数据 (DerivedData)",
+        name: "Xcode DerivedData",
         category: CleanCategory::Developer,
         risk_level: RiskLevel::Safe,
-        description: "工程编译索引、模块缓存与中间产物，可安全删除，每次编译重新生成",
+        description: "编译索引与中间产物",
         default_selected: true,
         sub_paths: &["Library/Developer/Xcode/DerivedData"],
+        scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "xcode_archives",
-        name: "Xcode 历史打包归档 (Archives)",
+        name: "Xcode Archives",
         category: CleanCategory::Developer,
         risk_level: RiskLevel::Recommended,
-        description: "历史发布打包保留的归档文件，占用巨大，清理前请确认无需保留",
+        description: "历史打包归档",
         default_selected: false,
         sub_paths: &["Library/Developer/Xcode/Archives"],
+        scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "homebrew_cache",
         name: "Homebrew 安装包缓存",
         category: CleanCategory::Developer,
         risk_level: RiskLevel::Safe,
-        description: "通过 brew install 下载的二进制安装包与源码镜像，安装后可删除",
+        description: "brew 下载的安装包与源码",
         default_selected: true,
         sub_paths: &["Library/Caches/Homebrew"],
+        scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "node_pnpm_npm_cache",
-        name: "Node.js 包管理工具缓存 (npm / pnpm / yarn)",
+        name: "npm / pnpm / yarn 缓存",
         category: CleanCategory::Developer,
         risk_level: RiskLevel::Safe,
-        description: "npm、pnpm 与 yarn 下载的 tar 压缩包缓存，重新安装依赖时会自动拉取",
+        description: "Node 包管理器下载缓存",
         default_selected: true,
         sub_paths: &[
             ".npm/_cacache",
+            ".npm/_logs",
+            ".npm/_prebuilds",
             "Library/Caches/pnpm",
             "Library/Caches/Yarn",
         ],
+        scope: RuleScope::Paths,
+    },
+    RuleDefinition {
+        id: "bun_corepack_cache",
+        name: "Bun / Corepack 缓存",
+        category: CleanCategory::Developer,
+        risk_level: RiskLevel::Safe,
+        description: "Bun 安装缓存与 Corepack",
+        default_selected: true,
+        sub_paths: &[".bun/install/cache", ".cache/node/corepack"],
+        scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "pip_python_cache",
-        name: "Python pip 下载包缓存",
+        name: "pip 下载包缓存",
         category: CleanCategory::Developer,
         risk_level: RiskLevel::Safe,
-        description: "pip install 下载的 wheel 包和安装归档缓存",
+        description: "pip wheel 与安装归档",
         default_selected: true,
         sub_paths: &["Library/Caches/pip"],
+        scope: RuleScope::Paths,
+    },
+    RuleDefinition {
+        id: "cargo_rustup_cache",
+        name: "Rust cargo / rustup 缓存",
+        category: CleanCategory::Developer,
+        risk_level: RiskLevel::Safe,
+        description: "crates 下载缓存与 rustup 安装包",
+        default_selected: true,
+        sub_paths: &[".cargo/registry/cache", ".rustup/downloads"],
+        scope: RuleScope::Paths,
+    },
+    RuleDefinition {
+        id: "expo_cache",
+        name: "Expo 工具缓存",
+        category: CleanCategory::Developer,
+        risk_level: RiskLevel::Safe,
+        description: "Expo 原生模块与版本缓存",
+        default_selected: true,
+        sub_paths: &[
+            ".expo/native-modules-cache",
+            ".expo/versions-cache",
+            ".expo/schema-cache",
+            ".expo/template-cache",
+            ".expo/android-apk-cache",
+            ".expo/ios-simulator-app-cache",
+        ],
+        scope: RuleScope::Paths,
     },
     // --- 系统与应用日志 ---
     RuleDefinition {
@@ -279,42 +410,72 @@ const CLEAN_RULES: &[RuleDefinition] = &[
         name: "用户级应用运行日志",
         category: CleanCategory::SystemLogs,
         risk_level: RiskLevel::Safe,
-        description: "各类应用程序运行期间记录的调试日志与历史滚动日志",
+        description: "应用调试与滚动日志",
         default_selected: true,
         sub_paths: &["Library/Logs"],
+        scope: RuleScope::Paths,
     },
-    // --- 应用通用缓存 ---
+    // --- 应用通用缓存（贴近 Mole 的 Caches / App Support 扫） ---
     RuleDefinition {
-        id: "general_app_caches",
-        name: "常用应用通用临时缓存",
+        id: "library_caches",
+        name: "用户应用缓存 (Library/Caches)",
         category: CleanCategory::AppCache,
         risk_level: RiskLevel::Safe,
-        description: "系统中各软件存放于 Caches 目录下的网络流、字体与临时索引",
+        description: "其余应用缓存目录（已排除浏览器与开发工具专属项）",
         default_selected: true,
-        sub_paths: &[
-            ".cache",
-            "Library/Caches/CloudKit",
-            "Library/Caches/com.apple.helpd",
-        ],
+        sub_paths: &["Library/Caches"],
+        scope: RuleScope::DirChildren(LIBRARY_CACHES_EXCLUDES),
+    },
+    RuleDefinition {
+        id: "dot_cache",
+        name: "用户 .cache 目录",
+        category: CleanCategory::AppCache,
+        risk_level: RiskLevel::Safe,
+        description: "含 uv、工具链等；已排除模型权重目录",
+        default_selected: true,
+        sub_paths: &[".cache"],
+        scope: RuleScope::DirChildren(DOT_CACHE_EXCLUDES),
+    },
+    RuleDefinition {
+        id: "app_support_caches",
+        name: "Application Support 可再生缓存",
+        category: CleanCategory::AppCache,
+        risk_level: RiskLevel::Safe,
+        description: "各应用下的 Cache / Code Cache / GPUCache 等",
+        default_selected: true,
+        sub_paths: &["Library/Application Support"],
+        scope: RuleScope::AppSupportLeaves,
+    },
+    RuleDefinition {
+        id: "zsh_completion_cache",
+        name: "Zsh 补全缓存",
+        category: CleanCategory::AppCache,
+        risk_level: RiskLevel::Safe,
+        description: "`.zcompdump` 补全转储",
+        default_selected: true,
+        sub_paths: &[],
+        scope: RuleScope::HomeFiles(".zcompdump"),
     },
     // --- 废纸篓与安装残留 ---
     RuleDefinition {
         id: "user_trash",
-        name: "系统废纸篓 (Trash)",
+        name: "废纸篓",
         category: CleanCategory::Trash,
         risk_level: RiskLevel::Recommended,
-        description: "已放入废纸篓但仍占用磁盘空间的文件，彻底清理后释放存储",
+        description: "废纸篓中仍占空间的文件",
         default_selected: true,
         sub_paths: &[".Trash"],
+        scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "downloads_installers",
         name: "下载目录安装包 (DMG / PKG)",
         category: CleanCategory::Trash,
         risk_level: RiskLevel::Recommended,
-        description: "Downloads 目录中残留的磁盘镜像与安装器文件",
+        description: "Downloads 顶层安装包",
         default_selected: false,
         sub_paths: &["Downloads"],
+        scope: RuleScope::Paths,
     },
 ];
 
@@ -402,6 +563,13 @@ fn path_stats(path: &Path) -> Result<(u64, u64), String> {
     Ok((bytes, files))
 }
 
+fn modified_secs(meta: &fs::Metadata) -> Option<u64> {
+    meta.modified()
+        .ok()
+        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+}
+
 fn scan_path_stats(path: &Path, installers_only: bool) -> (u64, u64, Vec<CleanSubDetail>, bool) {
     let mut bytes = 0;
     let mut files = 0;
@@ -440,11 +608,7 @@ fn scan_path_stats(path: &Path, installers_only: bool) -> (u64, u64, Vec<CleanSu
                     name: entry.file_name().to_string_lossy().into_owned(),
                     size_bytes: size,
                     file_count: count,
-                    modified_at: meta
-                        .modified()
-                        .ok()
-                        .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-                        .map(|d| d.as_secs()),
+                    modified_at: modified_secs(&meta),
                 });
             }
             Err(_) => failed = true,
@@ -453,6 +617,285 @@ fn scan_path_stats(path: &Path, installers_only: bool) -> (u64, u64, Vec<CleanSu
     details.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
     details.truncate(20);
     (bytes, files, details, failed)
+}
+
+fn name_excluded(name: &str, excludes: &[&str]) -> bool {
+    excludes.iter().any(|item| *item == name)
+}
+
+fn expand_rule_roots(home: &Path, rule: &RuleDefinition) -> (Vec<PathBuf>, bool) {
+    let mut roots = Vec::new();
+    let mut denied = false;
+    for sub_path in rule.sub_paths {
+        let (candidates, list_denied) = expand_sub_path(home, sub_path);
+        denied |= list_denied;
+        roots.extend(candidates);
+    }
+    (roots, denied)
+}
+
+fn scan_dir_children(
+    root: &Path,
+    excludes: &[&str],
+) -> (u64, u64, Vec<CleanSubDetail>, bool) {
+    let mut bytes = 0;
+    let mut files = 0;
+    let mut details = Vec::new();
+    let mut failed = false;
+    let entries = match fs::read_dir(root) {
+        Ok(e) => e,
+        Err(_) => return (0, 0, details, true),
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => {
+                failed = true;
+                continue;
+            }
+        };
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.') || name_excluded(name.as_ref(), excludes) {
+            continue;
+        }
+        let p = entry.path();
+        let meta = match fs::symlink_metadata(&p) {
+            Ok(m) => m,
+            Err(_) => {
+                failed = true;
+                continue;
+            }
+        };
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        match path_stats(&p) {
+            Ok((size, count)) => {
+                bytes += size;
+                files += count;
+                details.push(CleanSubDetail {
+                    path: p.to_string_lossy().into_owned(),
+                    name: name.into_owned(),
+                    size_bytes: size,
+                    file_count: count,
+                    modified_at: modified_secs(&meta),
+                });
+            }
+            Err(_) => failed = true,
+        }
+    }
+    details.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    details.truncate(20);
+    (bytes, files, details, failed)
+}
+
+fn scan_app_support_leaves(root: &Path) -> (u64, u64, Vec<CleanSubDetail>, bool) {
+    let mut bytes = 0;
+    let mut files = 0;
+    let mut details = Vec::new();
+    let mut failed = false;
+    let entries = match fs::read_dir(root) {
+        Ok(e) => e,
+        Err(_) => return (0, 0, details, true),
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => {
+                failed = true;
+                continue;
+            }
+        };
+        let app_name = entry.file_name();
+        let app_name = app_name.to_string_lossy();
+        if app_name.starts_with('.') {
+            continue;
+        }
+        let app_dir = entry.path();
+        let meta = match fs::symlink_metadata(&app_dir) {
+            Ok(m) => m,
+            Err(_) => {
+                failed = true;
+                continue;
+            }
+        };
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            continue;
+        }
+        for leaf in APP_SUPPORT_LEAF_NAMES {
+            let leaf_path = app_dir.join(leaf);
+            let leaf_meta = match fs::symlink_metadata(&leaf_path) {
+                Ok(m) => m,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => {
+                    failed = true;
+                    continue;
+                }
+            };
+            if leaf_meta.file_type().is_symlink() {
+                continue;
+            }
+            match path_stats(&leaf_path) {
+                Ok((size, count)) if size > 0 || count > 0 => {
+                    bytes += size;
+                    files += count;
+                    details.push(CleanSubDetail {
+                        path: leaf_path.to_string_lossy().into_owned(),
+                        name: format!("{app_name}/{leaf}"),
+                        size_bytes: size,
+                        file_count: count,
+                        modified_at: modified_secs(&leaf_meta),
+                    });
+                }
+                Ok(_) => {}
+                Err(_) => failed = true,
+            }
+        }
+    }
+    details.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    details.truncate(20);
+    (bytes, files, details, failed)
+}
+
+fn scan_home_files(home: &Path, prefix: &str) -> (u64, u64, Vec<CleanSubDetail>, bool) {
+    let mut bytes = 0;
+    let mut files = 0;
+    let mut details = Vec::new();
+    let mut failed = false;
+    let entries = match fs::read_dir(home) {
+        Ok(e) => e,
+        Err(_) => return (0, 0, details, true),
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => {
+                failed = true;
+                continue;
+            }
+        };
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with(prefix) {
+            continue;
+        }
+        let p = entry.path();
+        let meta = match fs::symlink_metadata(&p) {
+            Ok(m) => m,
+            Err(_) => {
+                failed = true;
+                continue;
+            }
+        };
+        if !meta.is_file() || meta.file_type().is_symlink() {
+            continue;
+        }
+        bytes += meta.len();
+        files += 1;
+        details.push(CleanSubDetail {
+            path: p.to_string_lossy().into_owned(),
+            name: name.into_owned(),
+            size_bytes: meta.len(),
+            file_count: 1,
+            modified_at: modified_secs(&meta),
+        });
+    }
+    details.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    details.truncate(20);
+    (bytes, files, details, failed)
+}
+
+fn collect_app_support_targets(root: &Path) -> Vec<PathBuf> {
+    let mut targets = Vec::new();
+    let Ok(entries) = fs::read_dir(root) else {
+        return targets;
+    };
+    for entry in entries.flatten() {
+        let app_dir = entry.path();
+        let Ok(meta) = fs::symlink_metadata(&app_dir) else {
+            continue;
+        };
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            continue;
+        }
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with('.') {
+            continue;
+        }
+        for leaf in APP_SUPPORT_LEAF_NAMES {
+            let leaf_path = app_dir.join(leaf);
+            if leaf_path.try_exists().unwrap_or(false) {
+                targets.push(leaf_path);
+            }
+        }
+    }
+    targets
+}
+
+fn path_allowed_for_rule(home: &Path, rule: &RuleDefinition, target: &Path) -> bool {
+    match rule.scope {
+        RuleScope::Paths => {
+            let (roots, _) = expand_rule_roots(home, rule);
+            if rule.id == "downloads_installers" {
+                return roots.iter().any(|root| {
+                    target.parent() == Some(root.as_path())
+                        && installer(target)
+                        && fs::symlink_metadata(target).is_ok_and(|m| m.is_file())
+                });
+            }
+            roots
+                .iter()
+                .any(|root| target != root.as_path() && target.starts_with(root))
+        }
+        RuleScope::DirChildren(excludes) => {
+            let (roots, _) = expand_rule_roots(home, rule);
+            roots.iter().any(|root| {
+                if target == root.as_path() || !target.starts_with(root) {
+                    return false;
+                }
+                let Ok(relative) = target.strip_prefix(root) else {
+                    return false;
+                };
+                let Some(std::path::Component::Normal(first)) = relative.components().next() else {
+                    return false;
+                };
+                let first = first.to_string_lossy();
+                !first.starts_with('.') && !name_excluded(first.as_ref(), excludes)
+            })
+        }
+        RuleScope::AppSupportLeaves => {
+            let root = home.join("Library/Application Support");
+            if !target.starts_with(&root) || target == root {
+                return false;
+            }
+            let Ok(relative) = target.strip_prefix(&root) else {
+                return false;
+            };
+            let parts: Vec<_> = relative.components().collect();
+            if parts.len() < 2 {
+                return false;
+            }
+            match (&parts[0], &parts[1]) {
+                (
+                    std::path::Component::Normal(app),
+                    std::path::Component::Normal(leaf),
+                ) => {
+                    !app.to_string_lossy().starts_with('.')
+                        && APP_SUPPORT_LEAF_NAMES.iter().any(|name| *name == leaf.to_string_lossy())
+                }
+                _ => false,
+            }
+        }
+        RuleScope::HomeFiles(prefix) => {
+            target.parent() == Some(home)
+                && target
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(prefix))
+                && fs::symlink_metadata(target).is_ok_and(|m| m.is_file())
+        }
+    }
 }
 
 /// Get primary disk total and free capacity (bytes)
@@ -515,42 +958,99 @@ pub fn scan_disk_clean_items() -> DiskCleanScanResult {
         let mut existing_paths = Vec::new();
         let mut is_denied = false;
 
-        for sub_path in rule.sub_paths {
-            let (candidates, list_denied) = expand_sub_path(&home_dir, sub_path);
-            if list_denied {
-                is_denied = true;
-                has_permission_issues = true;
-            }
-            for full_path in candidates {
-                if !full_path.try_exists().unwrap_or(true) {
-                    continue;
-                }
-                let path_str = full_path.to_string_lossy().to_string();
-                existing_paths.push(path_str);
-
-                let (sz, cnt, sub_details, denied) = if checked_path(&home_dir, &full_path).is_ok()
-                {
-                    scan_path_stats(&full_path, is_installer_rule)
-                } else {
-                    (0, 0, Vec::new(), true)
-                };
+        match rule.scope {
+            RuleScope::HomeFiles(prefix) => {
+                let (sz, cnt, sub_details, denied) = scan_home_files(&home_dir, prefix);
                 if denied {
                     is_denied = true;
                     has_permission_issues = true;
                 }
-                rule_size += sz;
-                rule_file_count += cnt;
-                rule_details.extend(sub_details);
+                if !sub_details.is_empty() {
+                    existing_paths.push(home_dir.to_string_lossy().into_owned());
+                    rule_size = sz;
+                    rule_file_count = cnt;
+                    rule_details = sub_details;
+                }
+            }
+            RuleScope::AppSupportLeaves => {
+                let root = home_dir.join("Library/Application Support");
+                if root.try_exists().unwrap_or(false) {
+                    existing_paths.push(root.to_string_lossy().into_owned());
+                    let (sz, cnt, sub_details, denied) =
+                        if checked_path(&home_dir, &root).is_ok() {
+                            scan_app_support_leaves(&root)
+                        } else {
+                            (0, 0, Vec::new(), true)
+                        };
+                    if denied {
+                        is_denied = true;
+                        has_permission_issues = true;
+                    }
+                    rule_size = sz;
+                    rule_file_count = cnt;
+                    rule_details = sub_details;
+                }
+            }
+            RuleScope::DirChildren(excludes) => {
+                let (roots, list_denied) = expand_rule_roots(&home_dir, rule);
+                if list_denied {
+                    is_denied = true;
+                    has_permission_issues = true;
+                }
+                for full_path in roots {
+                    if !full_path.try_exists().unwrap_or(true) {
+                        continue;
+                    }
+                    existing_paths.push(full_path.to_string_lossy().into_owned());
+                    let (sz, cnt, sub_details, denied) =
+                        if checked_path(&home_dir, &full_path).is_ok() {
+                            scan_dir_children(&full_path, excludes)
+                        } else {
+                            (0, 0, Vec::new(), true)
+                        };
+                    if denied {
+                        is_denied = true;
+                        has_permission_issues = true;
+                    }
+                    rule_size += sz;
+                    rule_file_count += cnt;
+                    rule_details.extend(sub_details);
+                }
+            }
+            RuleScope::Paths => {
+                let (roots, list_denied) = expand_rule_roots(&home_dir, rule);
+                if list_denied {
+                    is_denied = true;
+                    has_permission_issues = true;
+                }
+                for full_path in roots {
+                    if !full_path.try_exists().unwrap_or(true) {
+                        continue;
+                    }
+                    existing_paths.push(full_path.to_string_lossy().into_owned());
+                    let (sz, cnt, sub_details, denied) =
+                        if checked_path(&home_dir, &full_path).is_ok() {
+                            scan_path_stats(&full_path, is_installer_rule)
+                        } else {
+                            (0, 0, Vec::new(), true)
+                        };
+                    if denied {
+                        is_denied = true;
+                        has_permission_issues = true;
+                    }
+                    rule_size += sz;
+                    rule_file_count += cnt;
+                    rule_details.extend(sub_details);
+                }
             }
         }
 
-        // Sort details by size
         rule_details.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
         if rule_details.len() > 20 {
             rule_details.truncate(20);
         }
 
-        // Only include item if it exists on disk or was flagged with permission issues
+        // Include when roots exist (even if empty); HomeFiles only when matches found.
         if !existing_paths.is_empty() {
             match rule.risk_level {
                 RiskLevel::Safe => total_safe_bytes += rule_size,
@@ -645,6 +1145,113 @@ fn remove_checked(home: &Path, path: &Path, result: &mut CleanExecutionResult) {
     }
 }
 
+fn execute_rule(home: &Path, rule: &RuleDefinition, processed: &mut std::collections::HashSet<PathBuf>, result: &mut CleanExecutionResult) {
+    match rule.scope {
+        RuleScope::HomeFiles(prefix) => {
+            let Ok(entries) = fs::read_dir(home) else {
+                return;
+            };
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !name.starts_with(prefix) {
+                    continue;
+                }
+                let p = entry.path();
+                if fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()) && processed.insert(p.clone())
+                {
+                    remove_checked(home, &p, result);
+                }
+            }
+        }
+        RuleScope::AppSupportLeaves => {
+            let root = home.join("Library/Application Support");
+            if !root.try_exists().unwrap_or(false) {
+                return;
+            }
+            if let Err(e) = checked_path(home, &root) {
+                result.errors.push(e);
+                return;
+            }
+            for target in collect_app_support_targets(&root) {
+                if processed.insert(target.clone()) {
+                    remove_checked(home, &target, result);
+                }
+            }
+        }
+        RuleScope::DirChildren(excludes) => {
+            let (roots, _) = expand_rule_roots(home, rule);
+            for root in roots {
+                if !root.try_exists().unwrap_or(true) {
+                    continue;
+                }
+                if let Err(e) = checked_path(home, &root) {
+                    result.errors.push(e);
+                    continue;
+                }
+                match fs::read_dir(&root) {
+                    Ok(entries) => {
+                        for entry in entries {
+                            match entry {
+                                Ok(entry) => {
+                                    let name = entry.file_name();
+                                    let name = name.to_string_lossy();
+                                    if name.starts_with('.')
+                                        || name_excluded(name.as_ref(), excludes)
+                                    {
+                                        continue;
+                                    }
+                                    let p = entry.path();
+                                    if processed.insert(p.clone()) {
+                                        remove_checked(home, &p, result);
+                                    }
+                                }
+                                Err(e) => result.errors.push(e.to_string()),
+                            }
+                        }
+                    }
+                    Err(e) => result.errors.push(format!("{}: {}", root.display(), e)),
+                }
+            }
+        }
+        RuleScope::Paths => {
+            let (roots, _) = expand_rule_roots(home, rule);
+            for root in roots {
+                if !root.try_exists().unwrap_or(true) {
+                    continue;
+                }
+                if let Err(e) = checked_path(home, &root) {
+                    result.errors.push(e);
+                    continue;
+                }
+                match fs::read_dir(&root) {
+                    Ok(entries) => {
+                        for entry in entries {
+                            match entry {
+                                Ok(entry) => {
+                                    let p = entry.path();
+                                    if rule.id == "downloads_installers"
+                                        && (!installer(&p)
+                                            || !fs::symlink_metadata(&p)
+                                                .is_ok_and(|m| m.is_file()))
+                                    {
+                                        continue;
+                                    }
+                                    if processed.insert(p.clone()) {
+                                        remove_checked(home, &p, result);
+                                    }
+                                }
+                                Err(e) => result.errors.push(e.to_string()),
+                            }
+                        }
+                    }
+                    Err(e) => result.errors.push(format!("{}: {}", root.display(), e)),
+                }
+            }
+        }
+    }
+}
+
 fn execute_at(home: &Path, request: CleanExecutionRequest) -> CleanExecutionResult {
     let mut result = empty_result();
     if !request.delete_permanently {
@@ -660,38 +1267,7 @@ fn execute_at(home: &Path, request: CleanExecutionRequest) -> CleanExecutionResu
             result.errors.push(format!("未知清理项目: {}", id));
             continue;
         };
-        for relative in rule.sub_paths {
-            let root = home.join(relative);
-            if !root.try_exists().unwrap_or(true) {
-                continue;
-            }
-            if let Err(e) = checked_path(home, &root) {
-                result.errors.push(e);
-                continue;
-            }
-            match fs::read_dir(&root) {
-                Ok(entries) => {
-                    for entry in entries {
-                        match entry {
-                            Ok(entry) => {
-                                let p = entry.path();
-                                if rule.id == "downloads_installers"
-                                    && (!installer(&p)
-                                        || !fs::symlink_metadata(&p).is_ok_and(|m| m.is_file()))
-                                {
-                                    continue;
-                                }
-                                if processed.insert(p.clone()) {
-                                    remove_checked(home, &p, &mut result);
-                                }
-                            }
-                            Err(e) => result.errors.push(e.to_string()),
-                        }
-                    }
-                }
-                Err(e) => result.errors.push(format!("{}: {}", root.display(), e)),
-            }
-        }
+        execute_rule(home, rule, &mut processed, &mut result);
     }
     result.success = result.errors.is_empty();
     result
@@ -717,18 +1293,9 @@ pub fn execute_clean(request: CleanExecutionRequest) -> CleanExecutionResult {
 
 fn single_at(home: &Path, target: &Path) -> CleanExecutionResult {
     let mut result = empty_result();
-    let allowed = CLEAN_RULES.iter().any(|rule| {
-        rule.sub_paths.iter().any(|relative| {
-            let root = home.join(relative);
-            if rule.id == "downloads_installers" {
-                target.parent() == Some(root.as_path())
-                    && installer(target)
-                    && fs::symlink_metadata(target).is_ok_and(|m| m.is_file())
-            } else {
-                target != root && target.starts_with(root)
-            }
-        })
-    });
+    let allowed = CLEAN_RULES
+        .iter()
+        .any(|rule| path_allowed_for_rule(home, rule, target));
     if !allowed {
         result.errors.push("该路径不属于可清理范围".into());
     } else {
@@ -823,7 +1390,7 @@ mod safety_tests {
         assert_eq!(result.freed_bytes, 0);
         assert!(path.exists());
         let result = execute_clean(CleanExecutionRequest {
-            item_ids: vec!["general_app_caches".into()],
+            item_ids: vec!["dot_cache".into()],
             delete_permanently: true,
         });
         assert!(!result.success);
@@ -864,7 +1431,7 @@ mod safety_tests {
         let refused = execute_at(
             &f.0,
             CleanExecutionRequest {
-                item_ids: vec!["general_app_caches".into()],
+                item_ids: vec!["dot_cache".into()],
                 delete_permanently: false,
             },
         );
@@ -873,7 +1440,7 @@ mod safety_tests {
         let result = execute_at(
             &f.0,
             CleanExecutionRequest {
-                item_ids: vec!["general_app_caches".into()],
+                item_ids: vec!["dot_cache".into()],
                 delete_permanently: true,
             },
         );
@@ -901,14 +1468,61 @@ mod safety_tests {
         assert!(!dmg.exists());
         assert!(nested.exists());
         assert!(personal.exists());
-        let roots: Vec<_> = CLEAN_RULES
+        assert_rule_paths_do_not_conflict();
+    }
+
+    fn assert_rule_paths_do_not_conflict() {
+        // Path-scoped rules must not nest under each other.
+        let path_rules: Vec<_> = CLEAN_RULES
             .iter()
-            .flat_map(|r| r.sub_paths.iter())
+            .filter(|r| matches!(r.scope, RuleScope::Paths))
             .collect();
-        for a in &roots {
-            for b in &roots {
-                if a != b {
-                    assert!(!Path::new(a).starts_with(b), "overlapping rules: {a}, {b}");
+        for a in &path_rules {
+            for b in &path_rules {
+                if a.id == b.id {
+                    continue;
+                }
+                for pa in a.sub_paths {
+                    for pb in b.sub_paths {
+                        if pa.contains('*') || pb.contains('*') {
+                            continue;
+                        }
+                        assert!(
+                            !Path::new(pa).starts_with(pb),
+                            "overlapping path rules: {} ({pa}) under {} ({pb})",
+                            a.id,
+                            b.id
+                        );
+                    }
+                }
+            }
+        }
+        // DirChildren parents must exclude first-level names of more specific rules.
+        for parent in CLEAN_RULES {
+            let RuleScope::DirChildren(excludes) = parent.scope else {
+                continue;
+            };
+            for child in CLEAN_RULES {
+                if child.id == parent.id {
+                    continue;
+                }
+                for parent_root in parent.sub_paths {
+                    for child_path in child.sub_paths {
+                        let prefix = format!("{parent_root}/");
+                        let Some(rest) = child_path.strip_prefix(&prefix) else {
+                            continue;
+                        };
+                        let first = rest.split('/').next().unwrap_or("");
+                        if first.is_empty() || first == "*" {
+                            continue;
+                        }
+                        assert!(
+                            name_excluded(first, excludes),
+                            "{} path {child_path} under {} but `{first}` not excluded",
+                            child.id,
+                            parent.id
+                        );
+                    }
                 }
             }
         }
@@ -927,7 +1541,7 @@ mod safety_tests {
         let result = execute_at(
             &f.0,
             CleanExecutionRequest {
-                item_ids: vec!["general_app_caches".into()],
+                item_ids: vec!["dot_cache".into()],
                 delete_permanently: true,
             },
         );
@@ -959,7 +1573,7 @@ mod safety_tests {
             f.file(&format!(".cache/group{}/file{}", i / 100, i));
         }
         let started = std::time::Instant::now();
-        let scan = scan_path_stats(&f.0.join(".cache"), false);
+        let scan = scan_dir_children(&f.0.join(".cache"), DOT_CACHE_EXCLUDES);
         let scan_time = started.elapsed();
         if (scan.0, scan.1) != (70000, 10000) {
             let mut counts = Vec::new();
@@ -986,7 +1600,7 @@ mod safety_tests {
         let result = execute_at(
             &f.0,
             CleanExecutionRequest {
-                item_ids: vec!["general_app_caches".into()],
+                item_ids: vec!["dot_cache".into()],
                 delete_permanently: true,
             },
         );
@@ -1010,11 +1624,31 @@ mod safety_tests {
         let result = execute_at(
             &f.0,
             CleanExecutionRequest {
-                item_ids: vec!["general_app_caches".into()],
+                item_ids: vec!["dot_cache".into()],
                 delete_permanently: true,
             },
         );
         assert!(!result.success);
         assert!(p.exists());
+    }
+    #[test]
+    fn wildcard_paths_expand_on_execute_and_dot_cache_skips_excluded() {
+        let f = Fixture::new();
+        let cache = f.file(
+            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/account1/cache/img",
+        );
+        let model = f.file(".cache/huggingface/weights.bin");
+        let uv = f.file(".cache/uv/wheel");
+        let result = execute_at(
+            &f.0,
+            CleanExecutionRequest {
+                item_ids: vec!["wechat_timeline_stream".into(), "dot_cache".into()],
+                delete_permanently: true,
+            },
+        );
+        assert!(result.success, "{:?}", result.errors);
+        assert!(!cache.exists());
+        assert!(model.exists());
+        assert!(!uv.exists());
     }
 }
