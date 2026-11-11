@@ -32,6 +32,8 @@ pub struct CleanSubDetail {
     pub size_bytes: u64,
     pub file_count: u64,
     pub modified_at: Option<u64>,
+    #[serde(default)]
+    pub paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -83,6 +85,8 @@ pub struct CleanExecutionResult {
 enum RuleScope {
     /// Expand `sub_paths`; delete children of each existing root.
     Paths,
+    /// Aggregate historical chat media by year-month (e.g. `2024-05`).
+    MonthlyAggregate,
     /// Expand `sub_paths`; delete immediate children, skipping `excludes`.
     DirChildren(&'static [&'static str]),
     /// `~/Library/Application Support/<App>/{Cache, Code Cache, ...}`
@@ -147,10 +151,10 @@ const CLEAN_RULES: &[RuleDefinition] = &[
     // --- 微信清理 ---
     RuleDefinition {
         id: "wechat_webkit_cache",
-        name: "微信网页内核缓存",
+        name: "微信网页内核与小程序缓存",
         category: CleanCategory::Wechat,
         risk_level: RiskLevel::Safe,
-        description: "内置网页与小程序渲染缓存",
+        description: "WebKit 页面渲染、小程序包与浏览器内核引擎缓存",
         default_selected: true,
         sub_paths: &[
             "Library/Containers/com.tencent.xinWeChat/Data/Library/Caches",
@@ -158,6 +162,9 @@ const CLEAN_RULES: &[RuleDefinition] = &[
             "Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/Code Cache",
             "Library/Containers/com.tencent.xinWeChat/Data/Documents/app_data/radium/GPUCache",
             "Library/Containers/com.tencent.xinWeChat.WeChatMacShare/Data/Library/Caches",
+            "Library/Containers/com.tencent.xinWeChat/Data/Library/Application Support/com.tencent.xinWeChat/*/radium/Cache",
+            "Library/Containers/com.tencent.xinWeChat/Data/Library/Application Support/com.tencent.xinWeChat/*/radium/Code Cache",
+            "Library/Containers/com.tencent.xinWeChat/Data/Library/Application Support/com.tencent.xinWeChat/*/radium/GPUCache",
         ],
         scope: RuleScope::Paths,
     },
@@ -166,19 +173,39 @@ const CLEAN_RULES: &[RuleDefinition] = &[
         name: "微信朋友圈与流媒体缓存",
         category: CleanCategory::Wechat,
         risk_level: RiskLevel::Safe,
-        description: "朋友圈、公众号与短视频临时缓存",
+        description: "朋友圈图片/视频、公众号图文、视频号流媒体与头像缓存",
         default_selected: true,
         sub_paths: &[
             "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/*/cache",
+            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/*/avatar",
+            "Library/Containers/com.tencent.xinWeChat/Data/Library/Application Support/com.tencent.xinWeChat/*/*/Cache",
+            "Library/Containers/com.tencent.xinWeChat/Data/Library/Application Support/com.tencent.xinWeChat/*/*/Avatar",
+            "Documents/xwechat_files/*/cache",
+            "Documents/xwechat_files/*/avatar",
+        ],
+        scope: RuleScope::Paths,
+    },
+    RuleDefinition {
+        id: "wechat_temp_preview",
+        name: "微信临时运行文件与预览副本",
+        category: CleanCategory::Wechat,
+        risk_level: RiskLevel::Safe,
+        description: "查看文档/视频时生成的临时解压包与中转交换数据",
+        default_selected: true,
+        sub_paths: &[
+            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/*/temp",
+            "Library/Containers/com.tencent.xinWeChat/Data/Library/Application Support/com.tencent.xinWeChat/*/*/Message/MessageTemp",
+            "Library/Containers/com.tencent.xinWeChat/Data/tmp",
+            "Documents/xwechat_files/*/temp",
         ],
         scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "wechat_group_container_cache",
-        name: "微信共享群组缓存",
+        name: "微信系统共享扩展缓存",
         category: CleanCategory::Wechat,
         risk_level: RiskLevel::Safe,
-        description: "主程序与扩展共享缓存",
+        description: "主程序与 macOS 分享扩展交互产生的共享临时缓存",
         default_selected: true,
         sub_paths: &[
             "Library/Group Containers/5A4RE8SF68.com.tencent.xinWeChat/Library/Caches",
@@ -187,17 +214,36 @@ const CLEAN_RULES: &[RuleDefinition] = &[
         scope: RuleScope::Paths,
     },
     RuleDefinition {
-        id: "wechat_temp_preview",
-        name: "微信接收文件临时预览",
+        id: "wechat_chat_images",
+        name: "微信聊天历史图片",
         category: CleanCategory::Wechat,
         risk_level: RiskLevel::Recommended,
-        description: "预览文档/视频时的临时副本",
-        default_selected: true,
+        description: "聊天中收发的历史图片（清理后聊天记录中原图将提示已过期）",
+        default_selected: false,
         sub_paths: &[
-            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/*/temp",
-            "Library/Containers/com.tencent.xinWeChat/Data/tmp",
+            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/*/FileStorage/Image",
+            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/*/Image",
+            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/*/msg/attach",
+            "Documents/xwechat_files/*/FileStorage/Image",
+            "Documents/xwechat_files/*/Image",
         ],
-        scope: RuleScope::Paths,
+        scope: RuleScope::MonthlyAggregate,
+    },
+    RuleDefinition {
+        id: "wechat_chat_videos",
+        name: "微信聊天接收视频",
+        category: CleanCategory::Wechat,
+        risk_level: RiskLevel::Caution,
+        description: "聊天接收的视频文件（空间大户，清理后聊天窗口内无法直接播放）",
+        default_selected: false,
+        sub_paths: &[
+            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/*/FileStorage/Video",
+            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/*/Video",
+            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/*/msg/video",
+            "Documents/xwechat_files/*/FileStorage/Video",
+            "Documents/xwechat_files/*/Video",
+        ],
+        scope: RuleScope::MonthlyAggregate,
     },
     // --- QQ 清理 ---
     RuleDefinition {
@@ -205,7 +251,7 @@ const CLEAN_RULES: &[RuleDefinition] = &[
         name: "QQ 核心渲染与代码缓存",
         category: CleanCategory::Qq,
         risk_level: RiskLevel::Safe,
-        description: "GPU、代码缓存与崩溃转储",
+        description: "QQNT 架构 Electron 渲染缓存、GPU 缓存、崩溃日志与转储",
         default_selected: true,
         sub_paths: &[
             "Library/Containers/com.tencent.qq/Data/Library/Caches",
@@ -215,6 +261,7 @@ const CLEAN_RULES: &[RuleDefinition] = &[
             "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/Crashpad",
             "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/blob_storage",
             "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/Shared Dictionary",
+            "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/DawnCache",
         ],
         scope: RuleScope::Paths,
     },
@@ -223,26 +270,55 @@ const CLEAN_RULES: &[RuleDefinition] = &[
         name: "QQ 表情包与缩略图缓存",
         category: CleanCategory::Qq,
         risk_level: RiskLevel::Safe,
-        description: "表情、头像与缩略图",
+        description: "表情包、群自定义表情及缩略图缓存（再次浏览自动下载）",
         default_selected: true,
         sub_paths: &[
             "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/global/nt_data/Emoji",
+            "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/nt_qq*/nt_data/Emoji",
+            "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/nt_qq*/nt_data/Pic/Thumb",
+            "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/nt_qq*/nt_data/Pic/Cache",
         ],
         scope: RuleScope::Paths,
     },
     RuleDefinition {
         id: "qq_temp_files",
-        name: "QQ 临时运行文件与预览",
+        name: "QQ 运行临时文件与截图暂存",
         category: CleanCategory::Qq,
-        risk_level: RiskLevel::Recommended,
-        description: "临时交换文件与预览流",
+        risk_level: RiskLevel::Safe,
+        description: "截图剪贴板交换区、上传中转临时文件及预览流",
         default_selected: true,
         sub_paths: &[
             "Library/Containers/com.tencent.qq/Data/tmp",
             "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/global/nt_temp",
+            "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/nt_qq*/nt_temp",
+            "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/nt_qq*/nt_data/temp",
             "Library/Containers/com.tencent.qqexdoc/Data/Library/Caches",
         ],
         scope: RuleScope::Paths,
+    },
+    RuleDefinition {
+        id: "qq_chat_images",
+        name: "QQ 聊天高清原图",
+        category: CleanCategory::Qq,
+        risk_level: RiskLevel::Recommended,
+        description: "聊天中收发的高清原图文件（位于 Pic/Ori，清理后无法查看原图）",
+        default_selected: false,
+        sub_paths: &[
+            "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/nt_qq*/nt_data/Pic/Ori",
+        ],
+        scope: RuleScope::MonthlyAggregate,
+    },
+    RuleDefinition {
+        id: "qq_chat_videos",
+        name: "QQ 聊天接收视频",
+        category: CleanCategory::Qq,
+        risk_level: RiskLevel::Caution,
+        description: "群聊与私聊接收的短视频与高清视频（位于 Video 目录，占用较大）",
+        default_selected: false,
+        sub_paths: &[
+            "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/nt_qq*/nt_data/Video",
+        ],
+        scope: RuleScope::MonthlyAggregate,
     },
     // --- 浏览器缓存 ---
     RuleDefinition {
@@ -479,13 +555,14 @@ const CLEAN_RULES: &[RuleDefinition] = &[
     },
 ];
 
-// `*` matches one directory level, so per-account folders do not have to be hardcoded.
+// `*` matches one directory level (or `prefix*` matches directories starting with prefix).
 fn expand_sub_path(home: &Path, pattern: &str) -> (Vec<PathBuf>, bool) {
     let mut acc = vec![home.to_path_buf()];
     let mut denied = false;
     for part in pattern.split('/').filter(|part| !part.is_empty()) {
         let mut next = Vec::new();
-        if part == "*" {
+        if part == "*" || (part.contains('*') && !part.starts_with('.')) {
+            let prefix = part.strip_suffix('*');
             for dir in acc {
                 match fs::read_dir(&dir) {
                     Ok(entries) => {
@@ -494,6 +571,11 @@ fn expand_sub_path(home: &Path, pattern: &str) -> (Vec<PathBuf>, bool) {
                             let name = name.to_string_lossy();
                             if name.starts_with('.') {
                                 continue;
+                            }
+                            if let Some(pre) = prefix {
+                                if !name.starts_with(pre) {
+                                    continue;
+                                }
                             }
                             match entry.file_type() {
                                 Ok(kind) if kind.is_dir() && !kind.is_symlink() => {
@@ -517,8 +599,52 @@ fn expand_sub_path(home: &Path, pattern: &str) -> (Vec<PathBuf>, bool) {
     (acc, denied)
 }
 
+/// Strict protection: Never delete chat databases, journals, or core message directories.
+pub fn is_protected_chat_database(path: &Path) -> bool {
+    // 1. Never delete SQLite database files or journal/WAL files
+    if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
+        let ext = ext.to_ascii_lowercase();
+        if matches!(
+            ext.as_str(),
+            "db" | "db-wal" | "db-shm" | "sqlite" | "sqlite3" | "db3" | "db-journal"
+        ) {
+            return true;
+        }
+    }
+
+    // 2. Protect core message directories like `msg`, `Msg`, `db`
+    let path_str = path.to_string_lossy();
+    if path_str.contains("com.tencent.xinWeChat")
+        || path_str.contains("xwechat_files")
+        || path_str.contains("com.tencent.qq")
+        || path_str.contains("nt_data")
+    {
+        for component in path.components() {
+            if let std::path::Component::Normal(name) = component {
+                let name_str = name.to_string_lossy();
+                if name_str == "db" && (path_str.ends_with("/db") || path_str.ends_with("\\db")) {
+                    return true;
+                }
+                if name_str.eq_ignore_ascii_case("msg")
+                    && !path_str.contains("attach")
+                    && !path_str.contains("video")
+                    && !path_str.contains("file")
+                    && !path_str.contains("temp")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    false
+}
+
 // Never follow links, including links in an ancestor of a rule root.
 fn checked_path(home: &Path, path: &Path) -> Result<(), String> {
+    if is_protected_chat_database(path) {
+        return Err(format!("受保护的核心聊天记录数据库，禁止删除: {}", path.display()));
+    }
     use std::path::Component;
     let relative = path
         .strip_prefix(home)
@@ -570,6 +696,295 @@ fn modified_secs(meta: &fs::Metadata) -> Option<u64> {
         .map(|d| d.as_secs())
 }
 
+fn max_opt(a: Option<u64>, b: Option<u64>) -> Option<u64> {
+    match (a, b) {
+        (Some(x), Some(y)) => Some(x.max(y)),
+        (Some(x), None) => Some(x),
+        (None, Some(y)) => Some(y),
+        (None, None) => None,
+    }
+}
+
+/// Parse a directory or filename as `YYYY-MM` (e.g. `2024-05` or `2024-5`).
+fn parse_month_str(name: &str) -> Option<(i32, u32)> {
+    let parts: Vec<&str> = name.split('-').collect();
+    if parts.len() == 2 && parts[0].len() == 4 && (parts[1].len() == 1 || parts[1].len() == 2) {
+        if let (Ok(year), Ok(month)) = (parts[0].parse::<i32>(), parts[1].parse::<u32>()) {
+            if (2000..=2099).contains(&year) && (1..=12).contains(&month) {
+                return Some((year, month));
+            }
+        }
+    }
+    None
+}
+
+/// Convert unix timestamp in seconds to `(year, month)`.
+fn timestamp_to_year_month(secs: u64) -> (i32, u32) {
+    let days = (secs / 86400) as i64;
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = (yoe as i64) + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    (y as i32, m)
+}
+
+#[derive(Default)]
+struct MonthEntry {
+    size_bytes: u64,
+    file_count: u64,
+    paths: Vec<PathBuf>,
+    latest_modified: Option<u64>,
+}
+
+fn scan_monthly_aggregate(home: &Path, roots: &[PathBuf]) -> (u64, u64, Vec<CleanSubDetail>, bool) {
+    let mut total_bytes: u64 = 0;
+    let mut total_files: u64 = 0;
+    let mut month_map: std::collections::HashMap<(i32, u32), MonthEntry> =
+        std::collections::HashMap::new();
+    let mut failed = false;
+
+    for root in roots {
+        if !root.try_exists().unwrap_or(false) {
+            continue;
+        }
+        if checked_path(home, root).is_err() {
+            failed = true;
+            continue;
+        }
+        let entries = match fs::read_dir(root) {
+            Ok(e) => e,
+            Err(_) => {
+                failed = true;
+                continue;
+            }
+        };
+
+        for entry in entries {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => {
+                    failed = true;
+                    continue;
+                }
+            };
+            let p = entry.path();
+            if is_protected_chat_database(&p) {
+                continue;
+            }
+            let meta = match fs::symlink_metadata(&p) {
+                Ok(m) => m,
+                Err(_) => {
+                    failed = true;
+                    continue;
+                }
+            };
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            let file_name = entry.file_name().to_string_lossy().into_owned();
+            if file_name.starts_with('.') {
+                continue;
+            }
+
+            // Case A: p is directly a YYYY-MM directory (e.g. FileStorage/Image/2024-05)
+            if let Some((y, m)) = parse_month_str(&file_name) {
+                match path_stats(&p) {
+                    Ok((sz, cnt)) => {
+                        if sz > 0 || cnt > 0 {
+                            let entry = month_map.entry((y, m)).or_default();
+                            entry.size_bytes += sz;
+                            entry.file_count += cnt;
+                            entry.paths.push(p);
+                            entry.latest_modified =
+                                max_opt(entry.latest_modified, modified_secs(&meta));
+                        }
+                    }
+                    Err(_) => failed = true,
+                }
+            } else if meta.is_dir() {
+                // Case B: p is an intermediate folder (e.g. session hash folder in msg/attach)
+                let sub_entries = match fs::read_dir(&p) {
+                    Ok(e) => e,
+                    Err(_) => {
+                        failed = true;
+                        continue;
+                    }
+                };
+                for sub in sub_entries {
+                    let sub = match sub {
+                        Ok(e) => e,
+                        Err(_) => {
+                            failed = true;
+                            continue;
+                        }
+                    };
+                    let sub_p = sub.path();
+                    if is_protected_chat_database(&sub_p) {
+                        continue;
+                    }
+                    let sub_meta = match fs::symlink_metadata(&sub_p) {
+                        Ok(m) => m,
+                        Err(_) => {
+                            failed = true;
+                            continue;
+                        }
+                    };
+                    if sub_meta.file_type().is_symlink() {
+                        continue;
+                    }
+                    let sub_name = sub.file_name().to_string_lossy().into_owned();
+                    if sub_name.starts_with('.') {
+                        continue;
+                    }
+
+                    if let Some((y, m)) = parse_month_str(&sub_name) {
+                        match path_stats(&sub_p) {
+                            Ok((sz, cnt)) => {
+                                if sz > 0 || cnt > 0 {
+                                    let entry = month_map.entry((y, m)).or_default();
+                                    entry.size_bytes += sz;
+                                    entry.file_count += cnt;
+                                    entry.paths.push(sub_p);
+                                    entry.latest_modified = max_opt(
+                                        entry.latest_modified,
+                                        modified_secs(&sub_meta),
+                                    );
+                                }
+                            }
+                            Err(_) => failed = true,
+                        }
+                    } else if sub_meta.is_file() {
+                        let secs = modified_secs(&sub_meta).unwrap_or(0);
+                        let (y, m) = if secs > 0 {
+                            timestamp_to_year_month(secs)
+                        } else {
+                            (0, 0)
+                        };
+                        let key = if (2000..=2099).contains(&y) && (1..=12).contains(&m) {
+                            (y, m)
+                        } else {
+                            (0, 0)
+                        };
+                        let entry = month_map.entry(key).or_default();
+                        entry.size_bytes += sub_meta.len();
+                        entry.file_count += 1;
+                        entry.paths.push(sub_p);
+                        entry.latest_modified = max_opt(entry.latest_modified, Some(secs));
+                    } else {
+                        // Check if child directory contains YYYY-MM
+                        let mut found_month = false;
+                        if let Ok(deep_entries) = fs::read_dir(&sub_p) {
+                            for de in deep_entries.flatten() {
+                                let de_p = de.path();
+                                if is_protected_chat_database(&de_p) {
+                                    continue;
+                                }
+                                let de_name = de.file_name().to_string_lossy().into_owned();
+                                if let Some((y, m)) = parse_month_str(&de_name) {
+                                    if let Ok((sz, cnt)) = path_stats(&de_p) {
+                                        found_month = true;
+                                        let entry = month_map.entry((y, m)).or_default();
+                                        entry.size_bytes += sz;
+                                        entry.file_count += cnt;
+                                        entry.paths.push(de_p);
+                                    }
+                                }
+                            }
+                        }
+                        if !found_month {
+                            if let Ok((sz, cnt)) = path_stats(&sub_p) {
+                                if sz > 0 || cnt > 0 {
+                                    let secs = modified_secs(&sub_meta).unwrap_or(0);
+                                    let (y, m) = if secs > 0 {
+                                        timestamp_to_year_month(secs)
+                                    } else {
+                                        (0, 0)
+                                    };
+                                    let key = if (2000..=2099).contains(&y) && (1..=12).contains(&m)
+                                    {
+                                        (y, m)
+                                    } else {
+                                        (0, 0)
+                                    };
+                                    let entry = month_map.entry(key).or_default();
+                                    entry.size_bytes += sz;
+                                    entry.file_count += cnt;
+                                    entry.paths.push(sub_p);
+                                    entry.latest_modified =
+                                        max_opt(entry.latest_modified, Some(secs));
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Case C: p is a file directly under root
+                let secs = modified_secs(&meta).unwrap_or(0);
+                let (y, m) = if secs > 0 {
+                    timestamp_to_year_month(secs)
+                } else {
+                    (0, 0)
+                };
+                let key = if (2000..=2099).contains(&y) && (1..=12).contains(&m) {
+                    (y, m)
+                } else {
+                    (0, 0)
+                };
+                let entry = month_map.entry(key).or_default();
+                entry.size_bytes += meta.len();
+                entry.file_count += 1;
+                entry.paths.push(p);
+                entry.latest_modified = max_opt(entry.latest_modified, Some(secs));
+            }
+        }
+    }
+
+    let mut keys: Vec<(i32, u32)> = month_map.keys().copied().collect();
+    // Sort chronologically descending: (2026, 3), (2026, 2), ..., (0, 0)
+    keys.sort_by(|a, b| b.cmp(a));
+
+    let mut details = Vec::new();
+    for key in keys {
+        let entry = month_map.get_mut(&key).unwrap();
+        if entry.size_bytes == 0 && entry.file_count == 0 {
+            continue;
+        }
+        total_bytes += entry.size_bytes;
+        total_files += entry.file_count;
+
+        let display_name = if key.0 > 0 && key.1 > 0 {
+            format!("{}年{:02}月", key.0, key.1)
+        } else {
+            "更早之前".to_string()
+        };
+
+        entry.paths.sort();
+        entry.paths.dedup();
+        let paths_vec: Vec<String> = entry
+            .paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        let primary_path = paths_vec.join("\n");
+
+        details.push(CleanSubDetail {
+            path: primary_path,
+            name: display_name,
+            size_bytes: entry.size_bytes,
+            file_count: entry.file_count,
+            modified_at: entry.latest_modified,
+            paths: paths_vec,
+        });
+    }
+
+    (total_bytes, total_files, details, failed)
+}
+
 fn scan_path_stats(path: &Path, installers_only: bool) -> (u64, u64, Vec<CleanSubDetail>, bool) {
     let mut bytes = 0;
     let mut files = 0;
@@ -587,7 +1002,15 @@ fn scan_path_stats(path: &Path, installers_only: bool) -> (u64, u64, Vec<CleanSu
                 continue;
             }
         };
+        let file_name = entry.file_name();
+        let name_str = file_name.to_string_lossy();
+        if name_str.starts_with('.') {
+            continue;
+        }
         let p = entry.path();
+        if is_protected_chat_database(&p) {
+            continue;
+        }
         let meta = match fs::symlink_metadata(&p) {
             Ok(m) => m,
             Err(_) => {
@@ -609,6 +1032,7 @@ fn scan_path_stats(path: &Path, installers_only: bool) -> (u64, u64, Vec<CleanSu
                     size_bytes: size,
                     file_count: count,
                     modified_at: modified_secs(&meta),
+                    paths: vec![p.to_string_lossy().into_owned()],
                 });
             }
             Err(_) => failed = true,
@@ -624,12 +1048,20 @@ fn name_excluded(name: &str, excludes: &[&str]) -> bool {
 }
 
 fn expand_rule_roots(home: &Path, rule: &RuleDefinition) -> (Vec<PathBuf>, bool) {
-    let mut roots = Vec::new();
+    let mut raw_roots = Vec::new();
     let mut denied = false;
     for sub_path in rule.sub_paths {
         let (candidates, list_denied) = expand_sub_path(home, sub_path);
         denied |= list_denied;
-        roots.extend(candidates);
+        raw_roots.extend(candidates);
+    }
+    let mut roots = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for r in raw_roots {
+        let key = r.canonicalize().unwrap_or_else(|_| r.clone());
+        if seen.insert(key) {
+            roots.push(r);
+        }
     }
     (roots, denied)
 }
@@ -660,6 +1092,9 @@ fn scan_dir_children(
             continue;
         }
         let p = entry.path();
+        if is_protected_chat_database(&p) {
+            continue;
+        }
         let meta = match fs::symlink_metadata(&p) {
             Ok(m) => m,
             Err(_) => {
@@ -680,6 +1115,7 @@ fn scan_dir_children(
                     size_bytes: size,
                     file_count: count,
                     modified_at: modified_secs(&meta),
+                    paths: vec![p.to_string_lossy().into_owned()],
                 });
             }
             Err(_) => failed = true,
@@ -746,6 +1182,7 @@ fn scan_app_support_leaves(root: &Path) -> (u64, u64, Vec<CleanSubDetail>, bool)
                         size_bytes: size,
                         file_count: count,
                         modified_at: modified_secs(&leaf_meta),
+                        paths: vec![leaf_path.to_string_lossy().into_owned()],
                     });
                 }
                 Ok(_) => {}
@@ -781,6 +1218,9 @@ fn scan_home_files(home: &Path, prefix: &str) -> (u64, u64, Vec<CleanSubDetail>,
             continue;
         }
         let p = entry.path();
+        if is_protected_chat_database(&p) {
+            continue;
+        }
         let meta = match fs::symlink_metadata(&p) {
             Ok(m) => m,
             Err(_) => {
@@ -799,6 +1239,7 @@ fn scan_home_files(home: &Path, prefix: &str) -> (u64, u64, Vec<CleanSubDetail>,
             size_bytes: meta.len(),
             file_count: 1,
             modified_at: modified_secs(&meta),
+            paths: vec![p.to_string_lossy().into_owned()],
         });
     }
     details.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
@@ -835,7 +1276,7 @@ fn collect_app_support_targets(root: &Path) -> Vec<PathBuf> {
 
 fn path_allowed_for_rule(home: &Path, rule: &RuleDefinition, target: &Path) -> bool {
     match rule.scope {
-        RuleScope::Paths => {
+        RuleScope::Paths | RuleScope::MonthlyAggregate => {
             let (roots, _) = expand_rule_roots(home, rule);
             if rule.id == "downloads_installers" {
                 return roots.iter().any(|root| {
@@ -1016,6 +1457,15 @@ pub fn scan_disk_clean_items() -> DiskCleanScanResult {
                     rule_file_count += cnt;
                     rule_details.extend(sub_details);
                 }
+                existing_paths.sort();
+                existing_paths.dedup();
+                let mut seen_detail_paths = std::collections::HashSet::new();
+                rule_details.retain(|d| {
+                    let key = Path::new(&d.path)
+                        .canonicalize()
+                        .unwrap_or_else(|_| PathBuf::from(&d.path));
+                    seen_detail_paths.insert(key)
+                });
             }
             RuleScope::Paths => {
                 let (roots, list_denied) = expand_rule_roots(&home_dir, rule);
@@ -1042,12 +1492,43 @@ pub fn scan_disk_clean_items() -> DiskCleanScanResult {
                     rule_file_count += cnt;
                     rule_details.extend(sub_details);
                 }
+                existing_paths.sort();
+                existing_paths.dedup();
+                let mut seen_detail_paths = std::collections::HashSet::new();
+                rule_details.retain(|d| {
+                    let key = Path::new(&d.path)
+                        .canonicalize()
+                        .unwrap_or_else(|_| PathBuf::from(&d.path));
+                    seen_detail_paths.insert(key)
+                });
+            }
+            RuleScope::MonthlyAggregate => {
+                let (roots, list_denied) = expand_rule_roots(&home_dir, rule);
+                if list_denied {
+                    is_denied = true;
+                    has_permission_issues = true;
+                }
+                for r in &roots {
+                    if r.try_exists().unwrap_or(true) {
+                        existing_paths.push(r.to_string_lossy().into_owned());
+                    }
+                }
+                let (sz, cnt, sub_details, denied) = scan_monthly_aggregate(&home_dir, &roots);
+                if denied {
+                    is_denied = true;
+                    has_permission_issues = true;
+                }
+                rule_size = sz;
+                rule_file_count = cnt;
+                rule_details = sub_details;
             }
         }
 
-        rule_details.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
-        if rule_details.len() > 20 {
-            rule_details.truncate(20);
+        if !matches!(rule.scope, RuleScope::MonthlyAggregate) {
+            rule_details.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+            if rule_details.len() > 20 {
+                rule_details.truncate(20);
+            }
         }
 
         // Include when roots exist (even if empty); HomeFiles only when matches found.
@@ -1112,6 +1593,9 @@ fn remove_checked(home: &Path, path: &Path, result: &mut CleanExecutionResult) {
     let meta = match fs::symlink_metadata(path) {
         Ok(m) => m,
         Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                return;
+            }
             result.errors.push(e.to_string());
             return;
         }
@@ -1214,7 +1698,7 @@ fn execute_rule(home: &Path, rule: &RuleDefinition, processed: &mut std::collect
                 }
             }
         }
-        RuleScope::Paths => {
+        RuleScope::Paths | RuleScope::MonthlyAggregate => {
             let (roots, _) = expand_rule_roots(home, rule);
             for root in roots {
                 if !root.try_exists().unwrap_or(true) {
@@ -1314,7 +1798,22 @@ pub fn execute_clean_single_path(target: &str) -> CleanExecutionResult {
         };
     }
     match dirs::home_dir() {
-        Some(home) => single_at(&home, Path::new(target)),
+        Some(home) => {
+            let mut total_result = empty_result();
+            let mut attempted = false;
+            for line in target.lines().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                attempted = true;
+                let r = single_at(&home, Path::new(line));
+                total_result.freed_bytes += r.freed_bytes;
+                total_result.deleted_files_count += r.deleted_files_count;
+                total_result.errors.extend(r.errors);
+            }
+            if !attempted {
+                return empty_result();
+            }
+            total_result.success = total_result.errors.is_empty();
+            total_result
+        }
         None => CleanExecutionResult {
             errors: vec!["无法获取用户目录".into()],
             success: false,
@@ -1650,5 +2149,127 @@ mod safety_tests {
         assert!(!cache.exists());
         assert!(model.exists());
         assert!(!uv.exists());
+    }
+    #[test]
+    fn chat_databases_are_strictly_protected_from_deletion() {
+        let f = Fixture::new();
+        let wechat_db = f.file(
+            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/account1/msg/msg_0.db",
+        );
+        let qq_db = f.file(
+            "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/nt_qq/nt_data/db/nt_msg.db",
+        );
+        let qq_wal = f.file(
+            "Library/Containers/com.tencent.qq/Data/Library/Application Support/QQ/nt_qq/nt_data/db/nt_msg.db-wal",
+        );
+        assert!(is_protected_chat_database(&wechat_db));
+        assert!(is_protected_chat_database(&qq_db));
+        assert!(is_protected_chat_database(&qq_wal));
+
+        assert!(checked_path(&f.0, &wechat_db).is_err());
+        assert!(checked_path(&f.0, &qq_db).is_err());
+
+        assert!(!single_at(&f.0, &wechat_db).success);
+        assert!(wechat_db.exists());
+        assert!(qq_db.exists());
+    }
+
+    #[test]
+    fn date_helpers_parse_and_convert_correctly() {
+        assert_eq!(parse_month_str("2024-05"), Some((2024, 5)));
+        assert_eq!(parse_month_str("2026-12"), Some((2026, 12)));
+        assert_eq!(parse_month_str("40a6b5761730dd5a01f84a4ca8c92c82"), None);
+        assert_eq!(parse_month_str("thumb"), None);
+        assert_eq!(parse_month_str("1998-01"), None);
+
+        assert_eq!(timestamp_to_year_month(0), (1970, 1));
+        assert_eq!(timestamp_to_year_month(1709164800), (2024, 2)); // 2024-02-29 leap day
+        assert_eq!(timestamp_to_year_month(1709251200), (2024, 3)); // 2024-03-01
+        assert_eq!(timestamp_to_year_month(1773532800), (2026, 3)); // 2026-03-15
+    }
+
+    #[test]
+    fn monthly_aggregate_scans_and_deletes_by_month() {
+        let f = Fixture::new();
+        // Create WeChat structure:
+        // Root: Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_user/msg/attach
+        // Two sessions: hash_aaa and hash_bbb
+        let img_may1 = f.file("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_user/msg/attach/hash_aaa/2024-05/img1.jpg");
+        let img_may2 = f.file("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_user/msg/attach/hash_bbb/2024-05/img2.jpg");
+        let img_jun1 = f.file("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_user/msg/attach/hash_aaa/2024-06/img3.jpg");
+        let img_jun2 = f.file("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_user/FileStorage/Image/2024-06/img4.jpg");
+        let protected_db = f.file("Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_user/msg/msg_0.db");
+
+        let rule = CLEAN_RULES.iter().find(|r| r.id == "wechat_chat_images").unwrap();
+        let (roots, denied) = expand_rule_roots(&f.0, rule);
+        assert!(!denied);
+        assert!(!roots.is_empty());
+
+        let (total_bytes, total_files, details, failed) = scan_monthly_aggregate(&f.0, &roots);
+        assert!(!failed);
+        assert_eq!(total_files, 4);
+        assert!(total_bytes > 0);
+        assert_eq!(details.len(), 2);
+
+        // Ordered chronologically descending: 2024年06月 first, 2024年05月 second
+        assert_eq!(details[0].name, "2024年06月");
+        assert_eq!(details[0].file_count, 2);
+        assert_eq!(details[1].name, "2024年05月");
+        assert_eq!(details[1].file_count, 2);
+
+        // Delete only 2024年05月 using multi-line path in detail[1]
+        let may_paths = &details[1].path;
+        let mut clean_res = empty_result();
+        for line in may_paths.lines() {
+            let r = single_at(&f.0, Path::new(line));
+            clean_res.freed_bytes += r.freed_bytes;
+            clean_res.deleted_files_count += r.deleted_files_count;
+            clean_res.errors.extend(r.errors);
+        }
+        clean_res.success = clean_res.errors.is_empty();
+        assert!(clean_res.success, "{:?}", clean_res.errors);
+        assert_eq!(clean_res.deleted_files_count, 2);
+
+        // May files deleted
+        assert!(!img_may1.exists());
+        assert!(!img_may2.exists());
+        // June files remain
+        assert!(img_jun1.exists());
+        assert!(img_jun2.exists());
+        // Protected db remains
+        assert!(protected_db.exists());
+    }
+
+    #[test]
+    fn case_duplicates_and_hidden_files_are_deduplicated_and_filtered() {
+        let f = Fixture::new();
+        let cache_file = f.file(
+            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/account1/cache/2026-10/media.dat",
+        );
+        let ds_store = f.file(
+            "Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/account1/cache/.DS_Store",
+        );
+        let cache_dir = cache_file.parent().unwrap().parent().unwrap();
+
+        // 1. scan_path_stats should ignore .DS_Store
+        let (_bytes, _count, details, failed) = scan_path_stats(cache_dir, false);
+        assert!(!failed);
+        // Details should only show 2026-10, never .DS_Store!
+        assert_eq!(details.len(), 1);
+        assert_eq!(details[0].name, "2026-10");
+        assert!(ds_store.exists());
+
+        // 2. expand_rule_roots should deduplicate roots even if sub_paths has duplicate/case variations
+        let rule = CLEAN_RULES
+            .iter()
+            .find(|r| r.id == "wechat_timeline_stream")
+            .unwrap();
+        let (roots, denied) = expand_rule_roots(&f.0, rule);
+        assert!(!denied);
+        let mut seen = std::collections::HashSet::new();
+        for r in &roots {
+            let key = r.canonicalize().unwrap_or_else(|_| r.clone());
+            assert!(seen.insert(key), "Duplicate root found: {:?}", r);
+        }
     }
 }

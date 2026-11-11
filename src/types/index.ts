@@ -110,6 +110,7 @@ export interface ConvertItem {
   target_format: 'docx' | 'pdf' | 'image' | 'png' | 'jpg' | 'auto';
   page_range?: string;
   dpi?: number;
+  overwrite?: boolean;
 }
 
 export interface PdfToImageRequest {
@@ -123,6 +124,7 @@ export interface PdfToImageRequest {
 export interface ConvertRequest {
   items: ConvertItem[];
   default_output_dir?: string;
+  overwrite?: boolean;
 }
 
 export interface ConvertItemResult {
@@ -133,6 +135,7 @@ export interface ConvertItemResult {
   original_size: number;
   converted_size: number;
   engine_used: string;
+  local_pdf_pages?: number[];
 }
 
 export interface ConvertResult {

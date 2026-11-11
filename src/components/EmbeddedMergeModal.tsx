@@ -58,6 +58,13 @@ export const EmbeddedMergeModal: React.FC<EmbeddedMergeModalProps> = ({
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
 
+  // Sync initialDirectory if updated
+  useEffect(() => {
+    if (initialDirectory && !currentPath) {
+      setCurrentPath(initialDirectory);
+    }
+  }, [initialDirectory]);
+
   // Load directory contents
   const loadDirectory = useCallback(async (path: string) => {
     if (!path) return;

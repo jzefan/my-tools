@@ -55,17 +55,75 @@ interface OpenModule {
   tab: ActiveTabId;
 }
 
+const OPEN_MODULES_STORAGE_KEY = 'doc_tools_open_modules';
+const ACTIVE_SUITE_STORAGE_KEY = 'doc_tools_active_suite';
+const IS_HOME_VIEW_STORAGE_KEY = 'doc_tools_is_home_view';
+
+function getStoredOpenModules(enabledSuites: { id: string }[]): OpenModule[] | null {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return null;
+  }
+  try {
+    const raw = localStorage.getItem(OPEN_MODULES_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const enabledIds = new Set(enabledSuites.map((s) => s.id));
+        return parsed.filter(
+          (m): m is OpenModule =>
+            Boolean(m && typeof m.suiteId === 'string' && enabledIds.has(m.suiteId))
+        );
+      }
+    }
+  } catch (e) {
+    console.error('Failed to load saved open modules:', e);
+  }
+  return null;
+}
+
 export function App() {
   const enabledSuites = getEnabledSuites();
   const defaultSuite = getDefaultSuite();
   const multiSuite = enabledSuites.length > 1;
-  const [openModules, setOpenModules] = useState<OpenModule[]>(() =>
-    getEnabledSuites().length > 1
-      ? []
-      : [{ suiteId: getDefaultSuite().id, tab: getDefaultSuite().defaultTab }]
-  );
-  const [activeSuite, setActiveSuite] = useState<SuiteId>(defaultSuite.id);
-  const [isHomeView, setIsHomeView] = useState<boolean>(multiSuite);
+  const [openModules, setOpenModules] = useState<OpenModule[]>(() => {
+    if (!multiSuite) {
+      return [{ suiteId: defaultSuite.id, tab: defaultSuite.defaultTab }];
+    }
+    const saved = getStoredOpenModules(enabledSuites);
+    if (saved !== null) {
+      return saved;
+    }
+    return [];
+  });
+  const [activeSuite, setActiveSuite] = useState<SuiteId>(() => {
+    if (!multiSuite) return defaultSuite.id;
+    const savedModules = getStoredOpenModules(enabledSuites);
+    try {
+      const saved = localStorage.getItem(ACTIVE_SUITE_STORAGE_KEY) as SuiteId | null;
+      if (
+        saved &&
+        isSuiteEnabled(saved) &&
+        (!savedModules || savedModules.length === 0 || savedModules.some((m) => m.suiteId === saved))
+      ) {
+        return saved;
+      }
+    } catch {}
+    return savedModules?.[0]?.suiteId ?? defaultSuite.id;
+  });
+  const [isHomeView, setIsHomeView] = useState<boolean>(() => {
+    if (!multiSuite) return false;
+    const savedModules = getStoredOpenModules(enabledSuites);
+    if (savedModules === null || savedModules.length === 0) {
+      return true;
+    }
+    try {
+      const savedHome = localStorage.getItem(IS_HOME_VIEW_STORAGE_KEY);
+      if (savedHome !== null) {
+        return JSON.parse(savedHome) === true;
+      }
+    } catch {}
+    return false;
+  });
   const [launchContext, setLaunchContext] = useState<LaunchContext | null>(null);
   const [integrationStatus, setIntegrationStatus] = useState<IntegrationStatus | null>(null);
   const [isQuickMergeMode, setIsQuickMergeMode] = useState<boolean>(false);
@@ -170,6 +228,34 @@ export function App() {
     }
   }, [openSuite]);
 
+  // Persist opened modules and navigation state across restarts
+  useEffect(() => {
+    if (!multiSuite) return;
+    try {
+      localStorage.setItem(OPEN_MODULES_STORAGE_KEY, JSON.stringify(openModules));
+    } catch (e) {
+      console.error('Failed to persist open modules:', e);
+    }
+  }, [openModules, multiSuite]);
+
+  useEffect(() => {
+    if (!multiSuite) return;
+    try {
+      localStorage.setItem(ACTIVE_SUITE_STORAGE_KEY, activeSuite);
+    } catch (e) {
+      console.error('Failed to persist active suite:', e);
+    }
+  }, [activeSuite, multiSuite]);
+
+  useEffect(() => {
+    if (!multiSuite) return;
+    try {
+      localStorage.setItem(IS_HOME_VIEW_STORAGE_KEY, JSON.stringify(isHomeView));
+    } catch (e) {
+      console.error('Failed to persist isHomeView:', e);
+    }
+  }, [isHomeView, multiSuite]);
+
   // Handle close in quick merge mode (dismiss floating HUD)
   const handleClose = useCallback(async () => {
     try {
@@ -201,8 +287,6 @@ export function App() {
         ) {
           const target = resolveLaunchTarget(ctx.initial_action);
           openSuite(target.suiteId, target.tab);
-        } else if (getEnabledSuites().length > 1) {
-          setIsHomeView(true);
         }
       } catch (err) {
         console.error('Failed to get launch context:', err);

@@ -184,7 +184,8 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
   const handleRevealInFinder = async (path: string, e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await api.revealInFinder(path);
+      const targetPath = path.includes('\n') ? path.split('\n')[0].trim() : path.trim();
+      await api.revealInFinder(targetPath);
     } catch (err) {
       console.error('在访达中定位失败:', err);
     }
@@ -755,9 +756,14 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
               {isExpanded && hasDetails && (
                 <div className="px-4 pb-3 pt-1 border-t border-slate-100 dark:border-slate-800/60 bg-slate-50/50 dark:bg-slate-950/40 rounded-b-2xl">
                   <div className="text-[10px] font-medium text-slate-400 mb-1.5 uppercase tracking-wider">
-                    细分目录占用
+                    {item.id === 'wechat_chat_images' ||
+                    item.id === 'wechat_chat_videos' ||
+                    item.id === 'qq_chat_images' ||
+                    item.id === 'qq_chat_videos'
+                      ? '按月份细分'
+                      : '细分目录占用'}
                   </div>
-                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                  <div className="space-y-1 max-h-56 overflow-y-auto">
                     {item.details.map((detail, idx) => {
                       const isDetailBeingCleaned = isCleaningItem === detail.path;
 
@@ -772,6 +778,11 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
                             </span>
                           </div>
                           <div className="flex items-center space-x-3 shrink-0">
+                            {detail.file_count > 0 && (
+                              <span className="text-[10px] text-slate-400 font-normal">
+                                {detail.file_count.toLocaleString()} 个文件
+                              </span>
+                            )}
                             <span className="font-mono text-[11px] text-slate-500">
                               {formatFileSize(detail.size_bytes)}
                             </span>
@@ -779,7 +790,14 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
                             {/* In Finder button */}
                             <button
                               type="button"
-                              onClick={(e) => handleRevealInFinder(detail.path, e)}
+                              onClick={(e) =>
+                                handleRevealInFinder(
+                                  detail.paths && detail.paths.length > 0
+                                    ? detail.paths[0]
+                                    : detail.path,
+                                  e
+                                )
+                              }
                               title="在访达中显示"
                               className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-indigo-600 rounded transition-all cursor-pointer"
                             >

@@ -79,6 +79,38 @@ class CleanerApiService {
             ],
           },
           {
+            id: 'wechat_chat_images',
+            name: '微信聊天历史图片',
+            category: 'wechat',
+            risk_level: 'recommended',
+            description: '聊天中收发的历史图片（清理后聊天记录中原图将提示已过期）',
+            size_bytes: 2390000000,
+            file_count: 20493,
+            paths: ['~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/account/msg/attach'],
+            default_selected: false,
+            is_permission_denied: false,
+            details: [
+              {
+                path: '~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/account/msg/attach/session1/2026-03',
+                name: '2026年03月',
+                size_bytes: 548110000,
+                file_count: 3820,
+              },
+              {
+                path: '~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/account/msg/attach/session1/2026-02',
+                name: '2026年02月',
+                size_bytes: 211980000,
+                file_count: 1940,
+              },
+              {
+                path: '~/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/account/msg/attach/session1/2026-01',
+                name: '2026年01月',
+                size_bytes: 154740000,
+                file_count: 1410,
+              },
+            ],
+          },
+          {
             id: 'qq_engine_cache',
             name: 'QQ 核心渲染与代码缓存',
             category: 'qq',

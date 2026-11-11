@@ -67,6 +67,8 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
   const [result, setResult] = useState<ConvertResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [conflictFiles, setConflictFiles] = useState<string[]>([]);
+  const [showOverwriteModal, setShowOverwriteModal] = useState(false);
   const outcomeRef = useRef<HTMLDivElement>(null);
 
   // Lazy toggle and fetch engine status only when requested by user
@@ -249,29 +251,48 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
   };
 
   // Execute batch conversion
-  const handleConvert = async () => {
+  const handleConvert = async (forceOverwrite = false) => {
     if (queue.length === 0) {
       setErrorMessage('请先添加需要转换的文件');
       return;
     }
 
+    const items: ConvertItem[] = queue.map((q) => ({
+      input_path: q.path,
+      output_path: q.outputPath && q.outputPath.trim().length > 0 ? q.outputPath.trim() : undefined,
+      target_format: q.targetFormat,
+      page_range: q.pageRange && q.pageRange !== 'all' ? q.pageRange : undefined,
+      dpi: q.dpi || 150,
+      overwrite: forceOverwrite,
+    }));
+
+    if (!forceOverwrite) {
+      try {
+        const conflicts = await api.checkConvertConflicts({
+          items,
+          default_output_dir: defaultOutputDir.trim() || undefined,
+        });
+        if (conflicts && conflicts.length > 0) {
+          setConflictFiles(conflicts);
+          setShowOverwriteModal(true);
+          return;
+        }
+      } catch (e) {
+        // Fallback to direct conversion if check fails
+      }
+    }
+
+    setShowOverwriteModal(false);
     setIsConverting(true);
     setErrorMessage(null);
     setResult(null);
 
     const startTime = Date.now();
     try {
-      const items: ConvertItem[] = queue.map((q) => ({
-        input_path: q.path,
-        output_path: q.outputPath && q.outputPath.trim().length > 0 ? q.outputPath.trim() : undefined,
-        target_format: q.targetFormat,
-        page_range: q.pageRange && q.pageRange !== 'all' ? q.pageRange : undefined,
-        dpi: q.dpi || 150,
-      }));
-
       const res = await api.convertDocuments({
         items,
         default_output_dir: defaultOutputDir.trim() || undefined,
+        overwrite: forceOverwrite,
       });
 
       const elapsed = Date.now() - startTime;
@@ -304,7 +325,7 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
               <span>文档转换</span>
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              PDF 与 Word 互转，PDF 导出图片。扫描件不含 OCR，复杂表格与图片请核对。
+              PDF 与 Word 互转，支持 PDF 导出图片。
             </p>
           </div>
 
@@ -328,9 +349,8 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
             <div className="flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-300">
               <span className="flex items-center space-x-1.5">
                 <Sparkles className="w-4 h-4 text-blue-500" />
-                <span>本地依赖环境</span>
+                <span>转换引擎</span>
               </span>
-              <span className="text-[11px] text-slate-400">仅使用排版引擎</span>
             </div>
 
             {isLoadingEngine ? (
@@ -357,7 +377,11 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
                 )}
               </div>
               <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
-                <span className="text-slate-600 dark:text-slate-400">pdf2docx (排版转换)</span>
+                <span className="text-slate-600 dark:text-slate-400">PDF 转 Word（内置）</span>
+                <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">已就绪</span>
+              </div>
+              <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
+                <span className="text-slate-600 dark:text-slate-400">pdf2docx（可选）</span>
                 {engineStatus.pdf2docx_available ? (
                   <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">已就绪</span>
                 ) : (
@@ -381,7 +405,7 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
                 )}
               </div>
               <div className="p-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between">
-                <span className="text-slate-600 dark:text-slate-400">LibreOffice (soffice)</span>
+                <span className="text-slate-600 dark:text-slate-400">LibreOffice（转 PDF）</span>
                 {engineStatus.soffice_available ? (
                   <span className="text-emerald-600 dark:text-emerald-400 font-medium text-[11px]">已就绪</span>
                 ) : (
@@ -698,7 +722,7 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
             {/* Action Button */}
             <div className="pt-3">
               <button
-                onClick={handleConvert}
+                onClick={() => handleConvert()}
                 disabled={isConverting}
                 className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 text-white font-semibold text-xs transition-all shadow-md shadow-blue-500/20 flex items-center justify-center space-x-2 cursor-pointer disabled:cursor-not-allowed"
               >
@@ -725,7 +749,7 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
             status="error"
             errorTitle="转换失败"
             errorMessage={errorMessage}
-            onRetry={handleConvert}
+            onRetry={() => handleConvert()}
             onDismiss={() => setErrorMessage(null)}
           />
         )}
@@ -747,7 +771,7 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
                   ? `存在 ${result.results.filter((r) => !r.success).length} 个文档转换失败，具体原因见下方列表`
                   : null
               }
-              onRetry={result.results.some((r) => !r.success) ? handleConvert : undefined}
+              onRetry={result.results.some((r) => !r.success) ? () => handleConvert() : undefined}
               onDismiss={() => setResult(null)}
             />
 
@@ -864,9 +888,20 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
                     )}
 
                     {!res.success && (
-                      <div className="mt-1 p-2 rounded-lg bg-red-100/70 dark:bg-red-950/60 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 text-xs flex items-center space-x-1.5">
-                        <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-red-500" />
-                        <span className="font-medium">失败原因：{res.message || '转换失败'}</span>
+                      <div className="mt-1 p-2 rounded-lg bg-red-100/70 dark:bg-red-950/60 border border-red-200 dark:border-red-900/60 text-red-700 dark:text-red-300 text-xs flex items-center justify-between gap-2">
+                        <div className="flex items-center space-x-1.5 min-w-0 flex-1">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-red-500" />
+                          <span className="font-medium truncate">失败原因：{res.message || '转换失败'}</span>
+                        </div>
+                        {res.message?.includes('已存在') && (
+                          <button
+                            type="button"
+                            onClick={() => handleConvert(true)}
+                            className="shrink-0 px-2 py-0.5 rounded bg-red-200/80 dark:bg-red-900/60 hover:bg-red-300 dark:hover:bg-red-800 text-red-800 dark:text-red-200 text-[11px] font-medium transition-colors cursor-pointer"
+                          >
+                            覆盖重试
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -882,6 +917,59 @@ export const ConvertView: React.FC<ConvertViewProps> = ({ initialFile }) => {
         path={previewPath}
         onClose={() => setPreviewPath(null)}
       />
+
+      {/* Overwrite Confirmation Modal */}
+      {showOverwriteModal && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs animate-pop-in select-none"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowOverwriteModal(false);
+          }}
+        >
+          <div className="w-full max-w-md bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200/80 dark:border-slate-800 p-5 space-y-4">
+            <div className="flex items-start space-x-3">
+              <div className="p-2 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+                  目标文件已存在
+                </h3>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  以下文件已存在，是否覆盖？
+                </p>
+              </div>
+            </div>
+
+            <div className="max-h-36 overflow-y-auto rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200/80 dark:border-slate-800 p-2.5 space-y-1.5 text-xs font-mono text-slate-600 dark:text-slate-400">
+              {conflictFiles.map((path, idx) => (
+                <div key={idx} className="truncate" title={path}>
+                  {getPathBasename(path)}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowOverwriteModal(false)}
+                className="px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-medium hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors cursor-pointer"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => handleConvert(true)}
+                className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium transition-colors cursor-pointer"
+              >
+                确认覆盖
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

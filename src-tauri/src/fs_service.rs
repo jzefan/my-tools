@@ -10,6 +10,14 @@ pub const SUPPORTED_EXTENSIONS: &[&str] = &[
 pub fn get_quick_paths() -> Vec<QuickPath> {
     let mut list = Vec::new();
 
+    if let Some(home) = dirs::home_dir() {
+        list.push(QuickPath {
+            name: "个人主目录 (Home)".to_string(),
+            path: home.to_string_lossy().to_string(),
+            icon_type: "home".to_string(),
+        });
+    }
+
     if let Some(desktop) = dirs::desktop_dir() {
         list.push(QuickPath {
             name: "桌面 (Desktop)".to_string(),
@@ -42,21 +50,13 @@ pub fn get_quick_paths() -> Vec<QuickPath> {
         });
     }
 
-    if let Some(home) = dirs::home_dir() {
-        list.push(QuickPath {
-            name: "个人主目录 (Home)".to_string(),
-            path: home.to_string_lossy().to_string(),
-            icon_type: "home".to_string(),
-        });
-    }
-
     list
 }
 
 pub fn get_default_start_dir() -> String {
-    dirs::desktop_dir()
+    dirs::home_dir()
         .or_else(|| dirs::document_dir())
-        .or_else(|| dirs::home_dir())
+        .or_else(|| dirs::desktop_dir())
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|| "/".to_string())
 }
@@ -207,4 +207,27 @@ pub fn get_file_metadata(path_str: &str) -> Result<FileItem, String> {
         page_count,
         is_supported,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_start_dir_is_home() {
+        let default_dir = get_default_start_dir();
+        if let Some(home) = dirs::home_dir() {
+            assert_eq!(default_dir, home.to_string_lossy());
+        }
+    }
+
+    #[test]
+    fn test_quick_paths_first_is_home() {
+        let paths = get_quick_paths();
+        if dirs::home_dir().is_some() {
+            assert!(!paths.is_empty());
+            assert_eq!(paths[0].icon_type, "home");
+            assert!(paths[0].name.contains("个人主目录"));
+        }
+    }
 }

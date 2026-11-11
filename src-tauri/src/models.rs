@@ -127,6 +127,7 @@ pub struct ConvertItem {
     pub target_format: String, // "docx" | "pdf" | "image" | "png" | "jpg" | "auto"
     pub page_range: Option<String>,
     pub dpi: Option<u32>,
+    pub overwrite: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -142,6 +143,7 @@ pub struct PdfToImageRequest {
 pub struct ConvertRequest {
     pub items: Vec<ConvertItem>,
     pub default_output_dir: Option<String>,
+    pub overwrite: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -153,6 +155,8 @@ pub struct ConvertItemResult {
     pub original_size: u64,
     pub converted_size: u64,
     pub engine_used: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_pdf_pages: Option<Vec<u32>>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

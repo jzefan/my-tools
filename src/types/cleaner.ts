@@ -15,6 +15,7 @@ export interface CleanSubDetail {
   size_bytes: number;
   file_count: number;
   modified_at?: number;
+  paths?: string[];
 }
 
 export interface CleanItem {

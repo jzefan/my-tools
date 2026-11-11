@@ -75,7 +75,48 @@ export const api = {
   },
 
   convertDocuments: async (request: ConvertRequest): Promise<ConvertResult> => {
-    return await invoke<ConvertResult>('convert_documents', { request });
+    const usesPdfWord = request.items.some(item => /\.pdf$/i.test(item.input_path) &&
+      /^(docx|doc|auto)?$/i.test(item.target_format));
+    if (!usesPdfWord) return await invoke<ConvertResult>('convert_documents', { request });
+
+    const results: ConvertResult['results'] = [];
+    for (const item of request.items) {
+      const batch = await invoke<ConvertResult>('convert_documents', { request: { ...request, items: [item] } });
+      const { local_pdf_pages: pages, ...result } = batch.results[0];
+      if (pages) {
+        try {
+          const { pdfToWord } = await import('../utils/pdfToWord');
+          const source = await invoke<ArrayBuffer>('read_pdf_for_word', { path: item.input_path });
+          const { bytes, imagePages } = await pdfToWord(new Uint8Array(source), pages);
+          const output = new TextEncoder().encode(result.output_path);
+          const pathHeader = btoa(Array.from(output, byte => String.fromCharCode(byte)).join(''));
+          const size = await invoke<number>('save_local_pdf_word', bytes, {
+            headers: {
+              'x-doc-tools-output': pathHeader,
+              'x-doc-tools-overwrite': String(item.overwrite ?? request.overwrite ?? false),
+            },
+          });
+          const engine = imagePages
+            ? `内置转换 · ${imagePages} 页为图像`
+            : '内置转换 · 文本可编辑';
+          Object.assign(result, { success: true, message: `转换成功（${engine}）`, converted_size: size, engine_used: engine });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          result.message = `转换失败：${message}`;
+        }
+      }
+      results.push(result);
+    }
+    const successes = results.filter(result => result.success).length;
+    return {
+      success: successes > 0,
+      message: `转换任务完成：成功 ${successes} / ${results.length} 个文件`,
+      results,
+    };
+  },
+
+  checkConvertConflicts: async (request: ConvertRequest): Promise<string[]> => {
+    return await invoke<string[]>('check_convert_conflicts', { request });
   },
 
   convertPdfToImages: async (request: PdfToImageRequest): Promise<OperationResult> => {

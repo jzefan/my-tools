@@ -14,7 +14,7 @@ import { netdiskDevProxy } from './vite.netdisk.ts';
 
 function pdfjsResources(): Plugin {
   const root = fileURLToPath(new URL('./node_modules/pdfjs-dist/', import.meta.url));
-  const directories = ['cmaps', 'standard_fonts', 'wasm'];
+  const directories = ['cmaps', 'iccs', 'standard_fonts', 'wasm'];
   return {
     name: 'pdfjs-offline-resources',
     generateBundle() {
@@ -28,7 +28,7 @@ function pdfjsResources(): Plugin {
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
         const pathname = new URL(request.url || '/', 'http://localhost').pathname;
-        const match = /^\/pdfjs\/(cmaps|standard_fonts|wasm)\/([^/]+)$/.exec(pathname);
+        const match = /^\/pdfjs\/(cmaps|iccs|standard_fonts|wasm)\/([^/]+)$/.exec(pathname);
         if (!match) return next();
         let filename: string;
         try { filename = decodeURIComponent(match[2]); } catch { response.statusCode = 400; response.end(); return; }

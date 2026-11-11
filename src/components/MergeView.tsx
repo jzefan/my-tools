@@ -74,9 +74,24 @@ export const MergeView: React.FC<MergeViewProps> = ({
   // Preview Modal State
   const [previewPath, setPreviewPath] = useState<string | null>(null);
 
+  // Sync initialDirectory if updated
+  useEffect(() => {
+    if (initialDirectory && !currentPath) {
+      setCurrentPath(initialDirectory);
+    }
+  }, [initialDirectory]);
+
   // Load quick paths on mount
   useEffect(() => {
-    api.getQuickDirectories().then(setQuickPaths).catch(console.error);
+    api
+      .getQuickDirectories()
+      .then((paths) => {
+        setQuickPaths(paths);
+        if (!currentPath && !initialDirectory && paths.length > 0) {
+          setCurrentPath(paths[0].path);
+        }
+      })
+      .catch(console.error);
   }, []);
 
   // Set default merge output filename when directory changes

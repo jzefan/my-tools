@@ -65,7 +65,7 @@ fn get_launch_context(state: State<AppState>) -> LaunchContext {
     LaunchContext {
         initial_paths: Vec::new(),
         initial_directory: default_dir,
-        initial_action: "merge".to_string(),
+        initial_action: "browse".to_string(),
     }
 }
 
@@ -148,6 +148,41 @@ async fn convert_documents(request: ConvertRequest) -> Result<ConvertResult, Str
         pdf_convert::convert_documents(request)
     })
     .await
+}
+
+#[tauri::command]
+async fn check_convert_conflicts(request: ConvertRequest) -> Result<Vec<String>, String> {
+    blocking_task(move || Ok(pdf_convert::check_convert_conflicts(request))).await
+}
+
+#[tauri::command]
+async fn read_pdf_for_word(path: String) -> Result<tauri::ipc::Response, String> {
+    blocking_task(move || {
+        let path = std::path::Path::new(&path);
+        if !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("pdf")) {
+            return Err("请选择 PDF 文件".to_string());
+        }
+        std::fs::read(path).map(tauri::ipc::Response::new)
+            .map_err(|error| format!("无法读取 PDF：{}", error))
+    }).await
+}
+
+#[tauri::command]
+async fn save_local_pdf_word(request: tauri::ipc::Request<'_>) -> Result<u64, String> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let output_path = request.headers().get("x-doc-tools-output")
+        .and_then(|header| STANDARD.decode(header.as_bytes()).ok())
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .ok_or_else(|| "无效的 Word 输出路径".to_string())?;
+    let overwrite = request.headers().get("x-doc-tools-overwrite")
+        .is_some_and(|value| value == "true");
+    let tauri::ipc::InvokeBody::Raw(data) = request.body() else {
+        return Err("无法读取 Word 转换结果".to_string());
+    };
+    let data = data.clone();
+    blocking_task(move || {
+        pdf_convert::save_local_pdf_word(std::path::Path::new(&output_path), &data, overwrite)
+    }).await
 }
 
 #[tauri::command]
@@ -468,11 +503,11 @@ pub fn run() {
 
     // Parse launch arguments
     let mut initial_paths = Vec::new();
-    let mut initial_action = "merge".to_string();
+    let mut initial_action = String::new();
 
     if args.len() > 1 {
         for arg in &args[1..] {
-            if arg == "merge" || arg == "compress" || arg == "watermark" || arg == "convert" {
+            if arg == "merge" || arg == "compress" || arg == "watermark" || arg == "convert" || arg == "cleaner" || arg == "paper" || arg == "netdisk" || arg == "typing" || arg == "media" {
                 initial_action = arg.clone();
             } else if !arg.starts_with('-') && Path::new(arg).exists() {
                 initial_paths.push(arg.clone());
@@ -480,9 +515,15 @@ pub fn run() {
         }
     }
 
-    let initial_context = if !initial_paths.is_empty() {
+    let initial_context = if !initial_paths.is_empty() || !initial_action.is_empty() {
+        let action = if initial_action.is_empty() {
+            "merge".to_string()
+        } else {
+            initial_action
+        };
+
         #[cfg(target_os = "macos")]
-        if initial_action == "merge" {
+        if action == "merge" && !initial_paths.is_empty() {
             let menu_binary = Path::new("/Applications/DocTools.app/Contents/MacOS/doc-tools-menu");
             if menu_binary.exists() {
                 let status = Command::new(menu_binary).args(&initial_paths).status();
@@ -494,20 +535,24 @@ pub fn run() {
             }
         }
 
-        let first_path = Path::new(&initial_paths[0]);
-        let dir = if first_path.is_dir() {
-            first_path.to_string_lossy().to_string()
+        let dir = if let Some(first) = initial_paths.first() {
+            let first_path = Path::new(first);
+            if first_path.is_dir() {
+                first_path.to_string_lossy().to_string()
+            } else {
+                first_path
+                    .parent()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(fs_service::get_default_start_dir)
+            }
         } else {
-            first_path
-                .parent()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(fs_service::get_default_start_dir)
+            fs_service::get_default_start_dir()
         };
 
         Some(LaunchContext {
             initial_paths,
             initial_directory: dir,
-            initial_action,
+            initial_action: action,
         })
     } else {
         None
@@ -543,6 +588,9 @@ pub fn run() {
             analyze_watermarks,
             remove_watermarks_from_pdf,
             convert_documents,
+            check_convert_conflicts,
+            read_pdf_for_word,
+            save_local_pdf_word,
             convert_pdf_to_images,
             get_convert_engine_status,
             pick_file_dialog,

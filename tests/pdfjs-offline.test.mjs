@@ -5,7 +5,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 test('PDF renderer resources are bundled from the installed pdfjs version', () => {
-  for (const directory of ['cmaps', 'standard_fonts', 'wasm']) {
+  for (const directory of ['cmaps', 'iccs', 'standard_fonts', 'wasm']) {
     const source = join('node_modules/pdfjs-dist', directory);
     const destination = join('dist/pdfjs', directory);
     const files = readdirSync(source).filter(file => statSync(join(source, file)).isFile());

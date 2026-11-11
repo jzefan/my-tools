@@ -37,3 +37,25 @@ test('online modules expose a searchable mini program name and the math site', a
   assert.match(home, /微信搜索/);
   assert.doesNotMatch(home, /weixin:\/\/|wxaurl\.cn/);
 });
+
+test('App defaults to workbench only and persists opened modules across restarts', () => {
+  const appSource = fs.readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+  // Check storage keys defined
+  assert.match(appSource, /const OPEN_MODULES_STORAGE_KEY = 'doc_tools_open_modules';/);
+  assert.match(appSource, /const ACTIVE_SUITE_STORAGE_KEY = 'doc_tools_active_suite';/);
+  assert.match(appSource, /const IS_HOME_VIEW_STORAGE_KEY = 'doc_tools_is_home_view';/);
+
+  // Check default openModules returns [] when multiSuite and no saved state
+  assert.match(appSource, /getStoredOpenModules\(enabledSuites\)/);
+
+  // Check default launch does not open docs
+  assert.doesNotMatch(appSource, /initial_action === 'browse'[\s\S]*openSuite\('docs'/);
+
+  // Check Rust default context uses browse instead of merge
+  const libSource = fs.readFileSync(new URL('../src-tauri/src/lib.rs', import.meta.url), 'utf8');
+  assert.match(libSource, /initial_action:\s*"browse"\.to_string\(\)/);
+
+  // Check Rust default start dir is home dir
+  const fsSource = fs.readFileSync(new URL('../src-tauri/src/fs_service.rs', import.meta.url), 'utf8');
+  assert.match(fsSource, /pub fn get_default_start_dir\(\) -> String \{\s*dirs::home_dir\(\)/);
+});

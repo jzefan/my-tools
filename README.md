@@ -159,6 +159,6 @@ pnpm tauri build --bundles nsis
 
 原生文件/文件夹选择、文件定位和默认应用打开已接入跨平台插件。Finder 快捷操作仅出现在 macOS；Windows 可在系统集成页查看基于实际安装路径生成的 `.reg` 配置，复制后以 UTF-16 LE 编码保存再手动导入。Windows 11 的传统菜单可能位于“显示更多选项”。菜单按单个文件启动应用，不承诺资源管理器多选合并为同一个会话。
 
-Word/PDF 转换需要可用的外部转换引擎；Windows 不具备 macOS 的 textutil、Quick Look 或磁盘清理规则。`.doc` 阅读需先通过 Word/LibreOffice 转换，不是原生 DOCX 渲染。Ghostscript、LibreOffice、Python 及其扩展均未随安装包附带。
+PDF 转 Word 支持离线内置转换，标准文本页可编辑，扫描页和转曲页按原页保留为图像。已安装 pdf2docx 时可优先重建表格和排版。Word 转 PDF 和 `.doc` 阅读仍使用系统中可用的转换引擎。Windows 不具备 macOS 的 textutil、Quick Look 或磁盘清理规则。Ghostscript、LibreOffice、Python 及其扩展均未随安装包附带。
 
 [Windows 验收清单](docs/windows-acceptance.md) 与 `.github/workflows/windows.yml` 覆盖构建和回归入口。当前修改仅在 macOS 主机编译及测试，未完成 Windows 安装包或设备验收。
