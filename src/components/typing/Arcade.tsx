@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react';
-import { FINGER_COLOR, targetForChar } from '../../typing/keyboard';
 import type { PlayMode } from '../../typing/types';
 
 interface ArcadeProps {
@@ -68,12 +67,11 @@ export function Arcade({ mode, glyph, hitTick, missTick, hitChar, active, onBrea
       sim.moleY = sim.reduce ? 1 : 0.2;
       if (mode === 'shooter') sim.enemyY = 28;
       if (mode === 'tower' && hitChar) {
-        const finger = targetForChar(hitChar).finger;
         sim.blocks.push({
           y: 24,
           vy: 0,
           x: (Math.random() - 0.5) * 16,
-          color: finger ? FINGER_COLOR[finger] : '#4f46e5',
+          color: ['#b58a52', '#8e9b91', '#c1ac85'][hitTick % 3],
         });
         if (sim.blocks.length > 14) sim.blocks.shift();
       }
@@ -98,14 +96,14 @@ export function Arcade({ mode, glyph, hitTick, missTick, hitChar, active, onBrea
       const dt = Math.min(0.032, (now - last) / 1000);
       last = now;
       const rect = canvas.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
       const width = Math.max(1, Math.floor(rect.width * dpr));
       const height = Math.max(1, Math.floor(rect.height * dpr));
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
         canvas.height = height;
       }
-      step(sim, dt, rect.height || 1);
+      if (!document.hidden && sim.active) step(sim, dt, rect.height || 1);
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -129,7 +127,7 @@ function step(sim: Sim, dt: number, height: number) {
   if (sim.laser > 0) sim.laser = Math.max(0, sim.laser - dt * 3);
   sim.moleY += (1 - sim.moleY) * Math.min(1, dt * 7);
   if (sim.mode === 'shooter' && sim.active) {
-    sim.enemyY += (sim.reduce ? 70 : 46) * dt;
+    sim.enemyY += 46 * dt;
     if (sim.enemyY > height - 72) {
       if (!sim.breached) {
         sim.breached = true;
@@ -142,6 +140,8 @@ function step(sim: Sim, dt: number, height: number) {
   }
   if (sim.mode === 'tower') {
     const base = height - 28;
+    const capacity = Math.max(1, Math.floor((height - 60) / 18));
+    if (sim.blocks.length > capacity) sim.blocks.splice(0, sim.blocks.length - capacity);
     sim.blocks.forEach((block, index) => {
       const target = base - (index + 1) * 18;
       if (sim.reduce) {
@@ -151,13 +151,13 @@ function step(sim: Sim, dt: number, height: number) {
       }
       const accel = (target - block.y) * 80 - block.vy * 14;
       block.vy += accel * dt;
-      block.y += block.vy * dt * 60;
+      block.y += block.vy * dt;
     });
   }
 }
 
 function draw(ctx: CanvasRenderingContext2D, sim: Sim, width: number, height: number) {
-  const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const dark = true;
   ctx.clearRect(0, 0, width, height);
   ctx.save();
   if (sim.shake > 0) ctx.translate((Math.random() - 0.5) * sim.shake, 0);
@@ -203,14 +203,14 @@ function drawShooter(ctx: CanvasRenderingContext2D, sim: Sim, width: number, hei
     ctx.fillRect(x, y, 2, 2);
   }
   if (sim.laser > 0) {
-    ctx.strokeStyle = '#4f46e5';
+    ctx.strokeStyle = '#d9ab6a';
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.moveTo(shipX, shipY - 16);
     ctx.lineTo(shipX, sim.enemyY + 16);
     ctx.stroke();
   }
-  roundBox(ctx, shipX - 28, sim.enemyY, 56, 36, 8, '#4f46e5');
+  roundBox(ctx, shipX - 28, sim.enemyY, 56, 36, 2, '#d9ab6a');
   ctx.fillStyle = '#fff';
   ctx.font = '700 18px sans-serif';
   ctx.textAlign = 'center';

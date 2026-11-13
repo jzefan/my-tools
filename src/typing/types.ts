@@ -1,3 +1,4 @@
+import type { SoundSettings } from './preferences';
 export type BookId = string;
 
 export type PlayMode = 'focus' | 'mole' | 'shooter' | 'tower';
@@ -163,6 +164,7 @@ export interface TypingSnapshot {
   lessons: Record<string, LessonProgress>;
   weakKeys: WeakKey[];
   sound: boolean;
+  soundSettings: SoundSettings;
   bookCounts: Record<string, number>;
 }
 

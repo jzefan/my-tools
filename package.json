@@ -38,7 +38,9 @@
     "build:paper": "tsc && vite build --mode paper",
     "build:cleaner": "tsc && vite build --mode cleaner",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev:typing": "vite --mode typing",
+    "test:typing": "node --test tests/typing*.test.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

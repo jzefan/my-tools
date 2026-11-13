@@ -1,3 +1,4 @@
+import { normalizeSound, type SoundSettings } from './preferences';
 import initSqlJs, { type Database, type SqlValue } from 'sql.js/dist/sql-wasm-browser.js';
 import wasmUrl from 'sql.js/dist/sql-wasm-browser.wasm?url';
 import { SEED_ARTICLES, SEED_WORDS } from './catalog';
@@ -94,9 +95,13 @@ FROM words w
 LEFT JOIN word_progress p ON p.word_id = w.id
 `;
 
+export const TYPING_SAVE_ERROR = 'typing-save-error';
+export const TYPING_SAVE_OK = 'typing-save-ok';
+
 export class TypingDb {
   private timer = 0;
   private dirty = false;
+  private saving: Promise<void> | null = null;
   private loading = new Map<string, Promise<void>>();
 
   private constructor(private readonly db: Database) {}
@@ -115,7 +120,7 @@ export class TypingDb {
     store.seed();
     await store.flush();
     window.addEventListener('pagehide', () => {
-      void store.flush();
+      void store.flush().catch(() => undefined);
     });
     return store;
   }
@@ -153,6 +158,7 @@ export class TypingDb {
       weakKeys: this.weakKeys(),
       sound: sound == null ? true : sound === '1',
       bookCounts,
+      soundSettings: normalizeSound({ profile: this.meta('sound_profile'), volume: this.meta('sound_volume') == null ? undefined : Number(this.meta('sound_volume')) }),
     };
   }
 
@@ -380,6 +386,14 @@ export class TypingDb {
     this.touch();
   }
 
+  setSoundSettings(settings: SoundSettings) {
+    const value = normalizeSound(settings);
+    for (const [key, val] of [['sound_profile', value.profile], ['sound_volume', String(value.volume)]]) {
+      this.run('INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v', [key, val]);
+    }
+    this.touch();
+  }
+
   async ensureBook(book: string): Promise<void> {
     const pending = this.loading.get(book);
     if (pending) return pending;
@@ -440,14 +454,20 @@ export class TypingDb {
   }
 
   async flush() {
+    while (this.saving) await this.saving;
     if (!this.dirty) return;
     const bytes = this.db.export();
     this.dirty = false;
+    this.saving = saveDatabaseBytes(bytes);
     try {
-      await saveDatabaseBytes(bytes);
+      await this.saving;
+      window.dispatchEvent(new Event(TYPING_SAVE_OK));
     } catch (error) {
       this.dirty = true;
+      window.dispatchEvent(new Event(TYPING_SAVE_ERROR));
       throw error;
+    } finally {
+      this.saving = null;
     }
   }
 
@@ -544,7 +564,7 @@ export class TypingDb {
     this.dirty = true;
     window.clearTimeout(this.timer);
     this.timer = window.setTimeout(() => {
-      void this.flush();
+      void this.flush().catch(() => undefined);
     }, 200);
   }
 

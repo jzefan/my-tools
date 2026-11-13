@@ -37,6 +37,8 @@ interface DiskCleanerViewProps {
 export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }) => {
   const [scanResult, setScanResult] = useState<DiskCleanScanResult | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const isScanningRef = useRef(false);
+  isScanningRef.current = isScanning;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
@@ -89,33 +91,55 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
     void handleScan();
   }, [activeSubTab, handleScan]);
 
-  const accessWatchRef = useRef(0);
-  const watchFullDiskAccess = useCallback(() => {
-    const watchId = accessWatchRef.current + 1;
-    accessWatchRef.current = watchId;
-    const tick = async () => {
-      if (accessWatchRef.current !== watchId) return;
+  // Automatically watch for Full Disk Access permission when permission issues exist
+  useEffect(() => {
+    if (!scanResult?.has_permission_issues) return;
+
+    let isChecking = false;
+    let timerId: number | null = null;
+    let cancelled = false;
+
+    const check = async () => {
+      if (cancelled || isChecking || isScanningRef.current) return;
+      isChecking = true;
       try {
-        if (await cleanerApi.hasFullDiskAccess()) {
-          accessWatchRef.current = watchId + 1;
-          await handleScan();
+        const hasAccess = await cleanerApi.hasFullDiskAccess();
+        if (hasAccess && !cancelled) {
+          // Immediately hide "去系统设置开启" notice banner
+          setScanResult((prev) => (prev ? { ...prev, has_permission_issues: false } : prev));
+          // Automatically trigger scan after permission is enabled
+          void handleScan();
           return;
         }
       } catch {
-        // Keep waiting until the user enables access.
+        // Keep checking
+      } finally {
+        isChecking = false;
       }
-      if (accessWatchRef.current !== watchId) return;
-      window.setTimeout(tick, 1000);
     };
-    window.setTimeout(tick, 1000);
-  }, [handleScan]);
 
-  useEffect(
-    () => () => {
-      accessWatchRef.current += 1;
-    },
-    [],
-  );
+    void check();
+    timerId = window.setInterval(check, 1000);
+
+    const onFocus = () => {
+      void check();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void check();
+      }
+    };
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      if (timerId !== null) window.clearInterval(timerId);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [scanResult?.has_permission_issues, handleScan]);
 
   // Sync with external sub-tab from sidebar
   useEffect(() => {
@@ -472,9 +496,7 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
             <button
               type="button"
               onClick={() => {
-                void cleanerApi.openFullDiskAccessSettings().then((opened) => {
-                  if (opened) watchFullDiskAccess();
-                });
+                void cleanerApi.openFullDiskAccessSettings();
               }}
               className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-medium shrink-0 cursor-pointer shadow-2xs"
             >

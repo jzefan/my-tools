@@ -423,26 +423,63 @@ export const DiskUsageView: React.FC = () => {
     });
   };
 
-  const watchAccess = () => {
-    const watchId = watchRef.current + 1;
-    watchRef.current = watchId;
-    const tick = async () => {
-      if (watchRef.current !== watchId) return;
+  const scan = cache[rootPath];
+
+  // Automatically watch for Full Disk Access permission when permission issues exist
+  useEffect(() => {
+    if (!scan?.permission_denied) return;
+
+    let isChecking = false;
+    let timerId: number | null = null;
+    let cancelled = false;
+
+    const check = async () => {
+      if (cancelled || isChecking) return;
+      isChecking = true;
       try {
-        if (await cleanerApi.hasFullDiskAccess()) {
-          void load(rootPathRef.current, true, true);
+        const hasAccess = await cleanerApi.hasFullDiskAccess();
+        if (hasAccess && !cancelled) {
+          // Immediately hide banner and start auto reload
+          setCache((prev) => {
+            const current = prev[rootPathRef.current];
+            if (!current) return prev;
+            return {
+              ...prev,
+              [rootPathRef.current]: { ...current, permission_denied: false },
+            };
+          });
+          void loadRef.current(rootPathRef.current, true, true);
           return;
         }
       } catch {
-        // Keep waiting until access is granted.
+        // Keep checking
+      } finally {
+        isChecking = false;
       }
-      if (watchRef.current !== watchId) return;
-      window.setTimeout(tick, 1000);
     };
-    window.setTimeout(tick, 1000);
-  };
 
-  const scan = cache[rootPath];
+    void check();
+    timerId = window.setInterval(check, 1000);
+
+    const onFocus = () => {
+      void check();
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void check();
+      }
+    };
+
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      if (timerId !== null) window.clearInterval(timerId);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  }, [scan?.permission_denied]);
   const loadingRoot = loadingPath === rootPath;
   const shownRoot = scan ? visibleSize(scan.root_path, scan.size_bytes, cache) : 0;
   const diskUsed =
@@ -593,9 +630,7 @@ export const DiskUsageView: React.FC = () => {
             <button
               type="button"
               onClick={() => {
-                void cleanerApi.openFullDiskAccessSettings().then((opened) => {
-                  if (opened) watchAccess();
-                });
+                void cleanerApi.openFullDiskAccessSettings();
               }}
               className="px-2.5 py-1 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-[11px] font-medium shrink-0 cursor-pointer"
             >

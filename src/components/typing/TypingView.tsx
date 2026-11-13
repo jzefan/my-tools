@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, Lock } from 'lucide-react';
+import { ArrowRight, Check, Crosshair, Lock, Play, RotateCcw, Trophy } from 'lucide-react';
+import { GameShell } from './GameShell';
+import { DEFAULT_SOUND, type SoundSettings } from '../../typing/preferences';
+import { enterTypingFullscreen } from '../../typing/fullscreen';
 import { PracticeStage } from './PracticeStage';
-import { LoadingState } from '../common/LoadingState';
 import { catalogSize, DICT_GROUPS, dictById, dictsInGroup } from '../../typing/dicts';
 import {
   LESSONS,
@@ -12,7 +14,7 @@ import {
   lessonComplete,
   lessonRun,
 } from '../../typing/curriculum';
-import { openTypingDb, type TypingDb } from '../../typing/db';
+import { openTypingDb, TYPING_SAVE_ERROR, TYPING_SAVE_OK, type TypingDb } from '../../typing/db';
 import { finishedAll, sessionStats } from '../../typing/engine';
 import { clock, pct, startOfLocalDay, wpmText } from '../../typing/format';
 import { rankWeakKeys } from '../../typing/review';
@@ -29,6 +31,8 @@ import type {
 
 interface TypingViewProps {
   activeSubTab?: string;
+  isActive?: boolean;
+  onExit?: () => void;
 }
 
 type Screen =
@@ -38,7 +42,11 @@ type Screen =
 
 type WordFilter = 'wrong' | 'starred' | 'mastered';
 
-export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
+export function TypingView({ activeSubTab = 'typing', isActive = true, onExit }: TypingViewProps) {
+  const [tab, setTab] = useState(activeSubTab);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [soundSettings, setSoundSettings] = useState<SoundSettings>(DEFAULT_SOUND);
+  useEffect(() => { if (isActive) void enterTypingFullscreen(); }, [isActive]);
   const dbRef = useRef<TypingDb | null>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState('');
@@ -54,6 +62,14 @@ export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
   const [articles, setArticles] = useState<ArticleRow[]>([]);
   const [concealRead, setConcealRead] = useState(false);
   const [notice, setNotice] = useState('');
+  const [saveFailed, setSaveFailed] = useState(false);
+  useEffect(() => {
+    const failed = () => setSaveFailed(true);
+    const saved = () => setSaveFailed(false);
+    window.addEventListener(TYPING_SAVE_ERROR, failed);
+    window.addEventListener(TYPING_SAVE_OK, saved);
+    return () => { window.removeEventListener(TYPING_SAVE_ERROR, failed); window.removeEventListener(TYPING_SAVE_OK, saved); };
+  }, []);
   const [openLesson, setOpenLesson] = useState<string | null>(null);
   const [marks, setMarks] = useState({ starred: new Set<number>(), mastered: new Set<number>() });
 
@@ -63,6 +79,7 @@ export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
     const snap = db.snapshot(startOfLocalDay());
     setStats(snap);
     setSound(snap.sound);
+    setSoundSettings(snap.soundSettings);
     setReady(true);
   }, []);
 
@@ -77,19 +94,18 @@ export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
   }, [reload, snapshotTick]);
 
   useEffect(() => {
-    setScreen({ kind: 'hub' });
-    setNotice('');
+    setTab(activeSubTab);
   }, [activeSubTab]);
 
   useEffect(() => {
-    if (activeSubTab !== 'typing_words' || !filter || !ready) return;
+    if (tab !== 'typing_words' || !filter || !ready) return;
     const db = dbRef.current;
     if (!db) return;
     setRows(db.listWords(book, filter));
-  }, [activeSubTab, filter, book, ready, snapshotTick, screen.kind]);
+  }, [tab, filter, book, ready, snapshotTick, screen.kind]);
 
   useEffect(() => {
-    if (activeSubTab !== 'typing_read' || !ready) return;
+    if (tab !== 'typing_read' || !ready) return;
     const db = dbRef.current;
     if (!db) return;
     let live = true;
@@ -101,7 +117,7 @@ export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
     return () => {
       live = false;
     };
-  }, [activeSubTab, ready, snapshotTick]);
+  }, [tab, ready, snapshotTick]);
 
   async function remember(run: PracticeRun) {
     const db = await openTypingDb();
@@ -118,7 +134,7 @@ export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
       return;
     }
     setNotice('');
-    void remember(run);
+    void remember(run).catch(() => setNotice('单词标记暂未载入'));
     setScreen({ kind: 'run', run, attempt: Date.now() });
   }
 
@@ -150,9 +166,9 @@ export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
     if (run.source.type === 'lesson' && run.passAccuracy != null && finishedAll(state)) {
       db.recordLesson(lessonId, round.accuracy, round.wpm, round.accuracy >= run.passAccuracy, now);
     }
-    await db.flush();
-    setSnapshotTick((value) => value + 1);
     setScreen({ kind: 'result', run, state, play });
+    try { await db.flush(); } catch { setSaveFailed(true); }
+    setSnapshotTick((value) => value + 1);
   }
 
   async function chooseBook(next: string) {
@@ -170,27 +186,24 @@ export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
   }
 
   function toggleStar(wordId: number) {
-    let on = false;
-    setMarks((prev) => {
-      on = !prev.starred.has(wordId);
+    const db = dbRef.current;
+    if (!db) return;
+    const on = db.toggleStar(wordId);
+    setMarks(prev => {
       const starred = new Set(prev.starred);
-      if (on) starred.add(wordId);
-      else starred.delete(wordId);
+      if (on) starred.add(wordId); else starred.delete(wordId);
       return { ...prev, starred };
     });
-    void openTypingDb().then((db) => db.toggleStar(wordId));
   }
 
   function toggleMaster(wordId: number) {
-    let on = false;
-    setMarks((prev) => {
-      on = !prev.mastered.has(wordId);
+    const on = !marks.mastered.has(wordId);
+    dbRef.current?.setMastered(wordId, on, Date.now());
+    setMarks(prev => {
       const mastered = new Set(prev.mastered);
-      if (on) mastered.add(wordId);
-      else mastered.delete(wordId);
+      if (on) mastered.add(wordId); else mastered.delete(wordId);
       return { ...prev, mastered };
     });
-    void openTypingDb().then((db) => db.setMastered(wordId, on, Date.now()));
   }
 
   function toggleSound() {
@@ -199,27 +212,33 @@ export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
     void openTypingDb().then((db) => db.setSound(next));
   }
 
-  if (error) {
-    return <div className="flex h-full items-center justify-center text-sm text-slate-500">{error}</div>;
-  }
-  if (!ready || !stats) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <LoadingState label="词库" />
-      </div>
-    );
+  function changeSoundSettings(settings: SoundSettings) {
+    setSoundSettings(settings);
+    dbRef.current?.setSoundSettings(settings);
   }
 
+  function shell(children: ReactNode) {
+    return <GameShell tab={screen.kind === 'result' ? 'result' : tab} inRun={screen.kind === 'run'} sound={sound} settings={soundSettings}
+      settingsOpen={settingsOpen} notice={saveFailed ? '记录暂未保存，请重试。' : notice}
+      onRetrySave={saveFailed ? () => { void dbRef.current?.flush().catch(() => setSaveFailed(true)); } : undefined} onSettings={setSettingsOpen} onToggleSound={toggleSound}
+      onSoundSettings={changeSoundSettings} onExit={onExit}
+      onTab={next => { setTab(next); setScreen({ kind: 'hub' }); setNotice(''); }}>{children}</GameShell>;
+  }
+
+  if (error) return shell(<div className="tg-loading" role="alert"><h1>词库暂未就绪</h1><p>{error}</p><button className="tg-button" onClick={() => { setError(''); setSnapshotTick(t => t + 1); }}>重试</button></div>);
+  if (!ready || !stats) return shell(<div className="tg-loading" role="status"><span className="tg-eyebrow">KEYLINE</span><h1>准备训练</h1><div className="tg-loading-bar"/></div>);
+
   if (screen.kind === 'run') {
-    return (
+    return shell(
       <PracticeStage
         key={screen.attempt}
         run={screen.run}
         sound={sound}
+        soundSettings={soundSettings}
+        suspended={settingsOpen || !isActive}
         starred={marks.starred}
         mastered={marks.mastered}
         onFinish={(state, play) => { void finish(state, play); }}
-        onToggleSound={toggleSound}
         onStar={toggleStar}
         onMaster={toggleMaster}
       />
@@ -227,20 +246,21 @@ export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
   }
 
   if (screen.kind === 'result') {
-    return (
+    return shell(
       <Result
         screen={screen}
         onRetry={() => start(screen.run)}
-        onHome={() => setScreen({ kind: 'hub' })}
+        onHome={() => { setTab('typing'); setScreen({ kind: 'hub' }); }}
         onNext={(run) => start(run)}
       />
     );
   }
 
-  return (
-    <div className="h-full overflow-y-auto bg-white dark:bg-slate-950">
-      <div className="mx-auto max-w-3xl px-6 py-5">
-        {activeSubTab === 'typing_lesson' && (
+  return shell(
+    <div className={tab === 'typing' ? 'tg-lobby-body' : 'tg-hub-scroll'}>
+      <div className={tab === 'typing' ? '' : 'tg-hub-content'}>
+        {tab !== 'typing' && <div className="tg-section-heading"><span className="tg-eyebrow">{tab === 'typing_lesson' ? '01 / CAMPAIGN' : tab === 'typing_words' ? '02 / VOCABULARY' : tab === 'typing_read' ? '03 / READING' : '04 / RECORDS'}</span><h1>{tab === 'typing_lesson' ? '从基准键，向前一步。' : tab === 'typing_words' ? '让单词成为肌肉记忆。' : tab === 'typing_read' ? '进入英语的语境。' : '每一步，都有迹可循。'}</h1></div>}
+        {tab === 'typing_lesson' && (
           <LessonHub
             progress={stats.lessons}
             openLesson={openLesson}
@@ -251,7 +271,7 @@ export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
             }}
           />
         )}
-        {activeSubTab === 'typing_words' && (
+        {tab === 'typing_words' && (
           <WordHub
             book={book}
             mode={wordMode}
@@ -293,7 +313,7 @@ export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
             }}
           />
         )}
-        {activeSubTab === 'typing_read' && (
+        {tab === 'typing_read' && (
           <ReadHub
             articles={articles}
             conceal={concealRead}
@@ -301,10 +321,11 @@ export function TypingView({ activeSubTab = 'typing' }: TypingViewProps) {
             onStart={(article) => start(articleRun(article, concealRead))}
           />
         )}
-        {activeSubTab === 'typing_stats' && <StatsHub stats={stats} />}
-        {activeSubTab === 'typing' && (
+        {tab === 'typing_stats' && <StatsHub stats={stats} />}
+        {tab === 'typing' && (
           <TodayHub
             stats={stats}
+            onWords={() => setTab('typing_words')}
             onWarmup={() => start(buildWarmup(rankWeakKeys(stats.weakKeys)))}
             onContinue={() => {
               const target = continueTarget(stats.lessons);
@@ -330,47 +351,29 @@ function modeLabel(mode: WordMode): string {
   return '跟打';
 }
 
-function TodayHub({
-  stats,
-  onWarmup,
-  onContinue,
-}: {
+function TodayHub({ stats, onWarmup, onContinue, onWords }: {
   stats: NonNullable<ReturnType<TypingDb['snapshot']>>;
-  onWarmup: () => void;
-  onContinue: () => void;
+  onWarmup: () => void; onContinue: () => void; onWords: () => void;
 }) {
-  const day = startOfLocalDay();
-  const today = stats.sessions.filter((session) => session.startedAt >= day);
+  const today = stats.sessions.filter(session => session.startedAt >= startOfLocalDay());
   const duration = today.reduce((sum, session) => sum + session.durationMs, 0);
   const correct = today.reduce((sum, session) => sum + session.correct, 0);
   const wrong = today.reduce((sum, session) => sum + session.wrong, 0);
-  const warmed = today.some((session) => session.mode === 'warmup');
   const target = continueTarget(stats.lessons);
+  const completed = LESSONS.filter(lesson => lessonComplete(lesson, stats.lessons)).length;
   const keys = warmupKeys(rankWeakKeys(stats.weakKeys));
-  return (
-    <div className="space-y-3">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-sm font-medium text-slate-800 dark:text-slate-100">今日</h1>
-        <div className="text-xs tabular-nums text-slate-400">
-          {clock(duration)} · {correct + wrong > 0 ? pct(correct / (correct + wrong)) : '—'} · {stats.seenToday} 词
-        </div>
-      </div>
-      <button type="button" onClick={onWarmup} className={rowClass}>
-        <span>
-          <span className="block text-sm">1 分钟热身</span>
-          <span className="text-xs text-slate-400">{warmed ? '今天已完成' : keys.join(' ') || 'E I R U'}</span>
-        </span>
-        <span className="text-xs text-indigo-600">开始</span>
-      </button>
-      <button type="button" onClick={onContinue} className={rowClass}>
-        <span>
-          <span className="block text-sm">{target.lesson.title}</span>
-          <span className="text-xs text-slate-400">{target.lesson.steps[target.stepIndex].title}</span>
-        </span>
-        <span className="text-xs text-indigo-600">继续</span>
-      </button>
+  return <div className="tg-home">
+    <div className="tg-home-title"><div className="tg-eyebrow"><span className="tg-tag">TRAINING 01</span> 键入世界 · 从这里开始</div>
+      <h1>每一键，<br/>都是进阶<span>。</span></h1>
+      <p className="tg-home-sub">指尖的节奏，成为你的英语直觉。</p>
+      <div className="tg-home-actions"><button className="tg-button tg-primary" onClick={onContinue}><Play size={17} fill="currentColor"/>开始训练<ArrowRight size={18}/></button><button className="tg-button" onClick={onWords}>单词自由练习</button></div>
+      <div className="tg-current-mission"><span className="tg-eyebrow">当前关卡</span><strong>{target.lesson.title}</strong><span>{target.lesson.steps[target.stepIndex].title}</span><div className="tg-mission-pips" aria-label={`已完成 ${completed} / ${LESSONS.length} 关`}>{LESSONS.map((lesson, i) => <i key={lesson.id} data-done={i < completed} data-current={lesson.id === target.lesson.id}/>)}</div></div>
     </div>
-  );
+    <div className="tg-dock-label"><span className="tg-eyebrow">THE KEYBOARD DOCK</span><span>训练基地 / 01</span><div/></div>
+    <div className="tg-home-bottom"><button className="tg-warmup" onClick={onWarmup}><Crosshair size={23}/><span><strong>60 秒热身</strong><small>{keys.join(' · ').toUpperCase()}</small></span><ArrowRight size={18}/></button>
+      <dl className="tg-daily"><div><dt>今日训练</dt><dd>{clock(duration)}<small>时长</small></dd></div><div><dt>正确率</dt><dd>{correct + wrong > 0 ? pct(correct / (correct + wrong)) : '—'}<small>ACCURACY</small></dd></div><div><dt>今日单词</dt><dd>{stats.seenToday.toString().padStart(2, '0')}<small>WORDS</small></dd></div></dl>
+    </div>
+  </div>;
 }
 
 function LessonHub({
@@ -386,7 +389,7 @@ function LessonHub({
 }) {
   return (
     <div>
-      <h1 className="mb-2 text-sm font-medium">课程</h1>
+      <h2 className="mb-2 text-sm font-medium">课程</h2>
       <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 dark:divide-slate-800 dark:border-slate-800">
         {LESSONS.map((lesson, index) => {
           const unlocked = isLessonUnlocked(index, progress);
@@ -397,6 +400,7 @@ function LessonHub({
               <button
                 type="button"
                 disabled={!unlocked}
+                aria-expanded={open}
                 onClick={() => onToggle(lesson.id)}
                 className="flex w-full items-center gap-3 px-3 py-2.5 text-left disabled:opacity-40"
               >
@@ -465,6 +469,7 @@ function DictPicker({
           <button
             key={name}
             type="button"
+            aria-pressed={group === name}
             onClick={() => setGroup(name)}
             className={`rounded-md px-2 py-1 text-xs ${
               group === name ? 'bg-slate-900 text-white dark:bg-slate-100 dark:text-slate-900' : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
@@ -479,6 +484,7 @@ function DictPicker({
           <button
             key={item.id}
             type="button"
+            aria-pressed={book === item.id}
             onClick={() => onBook(item.id)}
             className={`flex items-center justify-between rounded-lg border px-3 py-2 text-left ${
               book === item.id
@@ -514,7 +520,7 @@ function WordHub(props: {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h1 className="text-sm font-medium">单词</h1>
+        <h2 className="text-sm font-medium">单词</h2>
         <button type="button" onClick={props.onStart} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs text-white">
           开始
         </button>
@@ -609,7 +615,7 @@ function ReadHub({
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h1 className="text-sm font-medium">短文</h1>
+        <h2 className="text-sm font-medium">短文</h2>
         <Segment
           value={conceal ? 'recall' : 'follow'}
           options={[
@@ -650,7 +656,7 @@ function StatsHub({ stats }: { stats: ReturnType<TypingDb['snapshot']> }) {
   const keys = rankWeakKeys(stats.weakKeys, 8);
   return (
     <div className="space-y-4">
-      <h1 className="text-sm font-medium">记录</h1>
+      <h2 className="text-sm font-medium">记录</h2>
       <div className="grid grid-cols-3 gap-2 text-center">
         <Stat label="已掌握" value={String(stats.mastered)} />
         <Stat label="学习中" value={String(stats.learning)} />
@@ -669,7 +675,7 @@ function StatsHub({ stats }: { stats: ReturnType<TypingDb['snapshot']> }) {
       <div className="text-xs text-slate-500">
         易错键 {keys.length > 0 ? keys.join(' ') : '暂无'}
       </div>
-      <div className="text-[11px] text-slate-400">词库 {catalogSize(stats.bookCounts)} · 本地 SQLite</div>
+      <div className="text-[11px] text-slate-400">词库 {catalogSize(stats.bookCounts)}</div>
     </div>
   );
 }
@@ -691,37 +697,18 @@ function Result({
   const misses = Object.entries(screen.state.keyMisses).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const wrongWords = screen.state.wordResults.filter((word) => !word.correct);
   const coming = passed ? nextRun(screen.run) : null;
-  return (
-    <div className="flex h-full items-center justify-center bg-white dark:bg-slate-950">
-      <div className="w-full max-w-sm px-6 text-center">
-        <div className="text-4xl font-semibold tabular-nums">{pct(round.accuracy)}</div>
-        <div className="mt-1 text-sm tabular-nums text-slate-500">
-          {wpmText(round.wpm)} WPM · {clock(round.durationMs)}
-        </div>
-        {passed === true && <div className="mt-2 text-sm text-emerald-600">通过</div>}
-        {passed === false && (
-          <div className="mt-2 text-sm text-rose-600">需要 {pct(screen.run.passAccuracy ?? 0)}</div>
-        )}
-        {misses.length > 0 && (
-          <div className="mt-4 text-xs text-slate-500">错键 {misses.map(([key]) => key).join(' ')}</div>
-        )}
-        {wrongWords.length > 0 && <WrongWords ids={wrongWords.map((word) => word.wordId)} />}
-        <div className="mt-6 flex justify-center gap-2">
-          <button type="button" onClick={onHome} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs dark:border-slate-700">
-            返回
-          </button>
-          <button type="button" onClick={onRetry} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs dark:border-slate-700">
-            再来
-          </button>
-          {coming && (
-            <button type="button" onClick={() => onNext(coming)} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs text-white">
-              下一节
-            </button>
-          )}
-        </div>
-      </div>
-    </div>
-  );
+  const timedComplete = screen.run.timedMs != null && round.durationMs >= screen.run.timedMs;
+  const grade = round.accuracy >= .98 ? 'S' : round.accuracy >= .95 ? 'A' : round.accuracy >= .85 ? 'B' : 'C';
+  return <div className="tg-result"><div className="tg-result-body">
+    <span className="tg-eyebrow">TRAINING REPORT / 训练报告</span>
+    <div className="tg-result-title"><div><h1>{passed === true ? '关卡完成' : timedComplete ? '热身完成' : complete ? '训练完成' : '本次训练已结束'}</h1><p>{screen.run.title}</p></div><div className="tg-grade" aria-label={`评级 ${grade}`}>{grade}<small>RANK</small></div></div>
+    <div className="tg-result-stats"><Stat label="正确率" value={pct(round.accuracy)}/><Stat label="速度 · WPM" value={wpmText(round.wpm)}/><Stat label="训练时长" value={clock(round.durationMs)}/></div>
+    <div className="tg-result-line"><Trophy size={16}/><span>正确敲击 <b>{round.correct}</b></span><span>失误 <b>{round.wrong}</b></span></div>
+    {passed === false && <p className="tg-result-note">{complete ? `达到 ${pct(screen.run.passAccuracy ?? 0)} 正确率解锁下一节` : '完成全部练习后解锁下一节'}</p>}
+    {misses.length > 0 && <div className="tg-result-note">待加强 {misses.map(([key]) => <kbd key={key}>{key === 'space' ? '空格' : key}</kbd>)}</div>}
+    {wrongWords.length > 0 && <WrongWords ids={wrongWords.map(word => word.wordId)}/>}
+    <div className="tg-result-actions"><button className="tg-button" onClick={onHome}>返回大厅</button><button className={`tg-button ${coming ? '' : 'tg-primary'}`} onClick={onRetry}><RotateCcw size={15}/>再来一次</button>{coming && <button className="tg-button tg-primary" onClick={() => onNext(coming)}>下一节<ArrowRight size={16}/></button>}</div>
+  </div></div>;
 }
 
 function WrongWords({ ids }: { ids: number[] }) {
@@ -790,6 +777,7 @@ function Segment<T extends string>({
         <button
           key={option.id}
           type="button"
+          aria-pressed={value === option.id}
           onClick={() => onChange(option.id)}
           className={`rounded-md px-2.5 py-1 text-xs ${
             value === option.id
@@ -806,7 +794,7 @@ function Segment<T extends string>({
 
 function FilterButton({ on, onClick, children }: { on: boolean; onClick: () => void; children: ReactNode }) {
   return (
-    <button type="button" onClick={onClick} className={on ? 'text-indigo-600' : 'hover:text-slate-800 dark:hover:text-slate-200'}>
+    <button type="button" aria-pressed={on} onClick={onClick} className={on ? 'text-indigo-600' : 'hover:text-slate-800 dark:hover:text-slate-200'}>
       {children}
     </button>
   );
@@ -820,5 +808,3 @@ function Stat({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
-const rowClass = 'flex w-full items-center justify-between rounded-xl border border-slate-200 px-4 py-3 text-left hover:border-indigo-300 dark:border-slate-800 dark:hover:border-indigo-700';

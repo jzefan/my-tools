@@ -13,6 +13,7 @@ import {
   applyKey,
   createSession,
   finishedAll,
+  finalize,
   sessionStats,
 } from '../src/typing/engine.ts';
 import { homeReturn, homeReturnNote, targetForChar } from '../src/typing/keyboard.ts';
@@ -109,4 +110,47 @@ test('seed words keep stable unique ids', () => {
   assert.ok(SEED_WORDS.filter((word) => word.book === 'primary').length >= 100);
   assert.ok(SEED_WORDS.filter((word) => word.book === 'junior').length >= 30);
   assert.ok(SEED_WORDS.filter((word) => word.book === 'sentence').length >= 16);
+});
+
+// Pausing must preserve speed, timed-session deadlines, and in-flight word progress.
+test('pause time is excluded from elapsed time and WPM across repeated pauses', async () => {
+  const { resumeSession } = await import('../src/typing/engine.ts');
+  let state = createSession([{ id: 'pause', prompt: 'abcdef' }]);
+  state = applyKey(state, { key: 'a' }, { allowBackspace: true, now: 1000 }).state;
+  state = applyKey(state, { key: 'b' }, { allowBackspace: true, now: 2000 }).state;
+  const before = sessionStats(state, 3000);
+  state = resumeSession(state, 40_000);
+  assert.equal(sessionStats(state, 43_000).durationMs, before.durationMs);
+  assert.equal(sessionStats(state, 43_000).wpm, before.wpm);
+  assert.equal(state.charIndex, 2);
+  assert.equal(state.combo, 2);
+  state = resumeSession(state, 20_000);
+  assert.equal(sessionStats(state, 63_000).durationMs, 2000);
+  assert.equal(resumeSession(state, -1), state);
+  assert.equal(resumeSession(state, NaN), state);
+  const done = finalize(state, 64_000);
+  assert.equal(resumeSession(done, 5000), done);
+  const fresh = createSession([{ id: 'fresh', prompt: 'a' }]);
+  assert.equal(resumeSession(fresh, 5000), fresh);
+});
+
+test('finishing during the last-item hold records completion exactly once', () => {
+  const initial = createSession([{ id: 'hold', prompt: 'a', wordId: 7 }]);
+  const held = applyKey(initial, { key: 'a' }, { allowBackspace: false, now: 1000 }).state;
+  const done = finalize(held, 2000);
+  assert.equal(finishedAll(done), true);
+  assert.deepEqual(done.wordResults, [{ wordId: 7, correct: true }]);
+  assert.deepEqual(finalize(done, 3000).wordResults, done.wordResults);
+  assert.deepEqual(advanceItem(done, 3000).wordResults, done.wordResults);
+});
+
+test('sound preferences migrate safely and preserve an intentional zero volume', async () => {
+  const { normalizeSound, DEFAULT_SOUND, SOUND_PROFILES } = await import('../src/typing/preferences.ts');
+  assert.deepEqual(normalizeSound(null), DEFAULT_SOUND);
+  assert.deepEqual(normalizeSound({ profile: 'unknown', volume: NaN }), DEFAULT_SOUND);
+  assert.equal(normalizeSound({ volume: Infinity }).volume, DEFAULT_SOUND.volume);
+  assert.equal(normalizeSound({ volume: 0 }).volume, 0);
+  assert.equal(normalizeSound({ volume: -20 }).volume, 0);
+  assert.equal(normalizeSound({ volume: 12 }).volume, 1);
+  for (const p of SOUND_PROFILES) assert.equal(normalizeSound({ profile: p.id }).profile, p.id);
 });

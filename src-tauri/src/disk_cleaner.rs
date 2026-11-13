@@ -1382,6 +1382,7 @@ pub fn scan_disk_clean_items() -> DiskCleanScanResult {
         };
     }
     let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/Users/current"));
+    let has_fda = crate::macos_privacy::full_disk_access_granted();
 
     let mut scanned_items = Vec::new();
     let mut total_scanned_bytes = 0u64;
@@ -1553,7 +1554,7 @@ pub fn scan_disk_clean_items() -> DiskCleanScanResult {
                 paths: existing_paths,
                 default_selected: rule.default_selected && rule_size > 0,
                 details: rule_details,
-                is_permission_denied: is_denied,
+                is_permission_denied: if has_fda { false } else { is_denied },
             });
         }
     }
@@ -1568,7 +1569,7 @@ pub fn scan_disk_clean_items() -> DiskCleanScanResult {
         total_caution_bytes,
         total_files,
         items: scanned_items,
-        has_permission_issues,
+        has_permission_issues: if has_fda { false } else { has_permission_issues },
         disk_total_bytes: disk_total,
         disk_free_bytes: disk_free,
         full_disk_client_name: crate::macos_privacy::privacy_client_name(),

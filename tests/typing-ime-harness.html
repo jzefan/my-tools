@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>打字输入法回归检查</title></head>
+<body>
+  <button id="replay" type="button">重放输入法切换</button>
+  <pre id="result" role="status"></pre>
+  <div id="root"></div>
+  <script type="module">
+    import { createElement } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { PracticeStage } from '/src/components/typing/PracticeStage.tsx';
+    import { DEFAULT_SOUND } from '/src/typing/preferences.ts';
+    import '/src/components/typing/game.css';
+
+    const root = createRoot(document.querySelector('#root'));
+    const replay = document.querySelector('#replay');
+    const result = document.querySelector('#result');
+    const nextFrame = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const run = {
+      title: '输入法测试', items: [{ id: 'ime', prompt: 'aA b\nc' }],
+      allowBackspace: true, assist: true, speakOnShow: false,
+      showExample: false, mono: true, passAccuracy: null, timedMs: null,
+      source: { type: 'ids' },
+    };
+    let attempt = 0;
+    async function start() {
+      root.render(createElement(PracticeStage, {
+        key: ++attempt, run, sound: false, soundSettings: DEFAULT_SOUND,
+        suspended: false, starred: new Set(), mastered: new Set(),
+        onFinish() {}, onStar() {}, onMaster() {},
+      }));
+      await nextFrame();
+      return document.querySelector('.tg-capture');
+    }
+    function press(target, key, options = {}) {
+      target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...options }));
+    }
+    function progress() {
+      return Number(document.querySelector('.tg-progress').getAttribute('aria-valuenow'));
+    }
+    function accuracy() {
+      return document.querySelectorAll('.tg-hud strong')[1].textContent;
+    }
+    replay.addEventListener('click', async () => {
+      replay.disabled = true;
+      try {
+        let input = await start();
+        input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+        await nextFrame();
+        press(input, 'a', { isComposing: true });
+        press(input, 'Enter', { keyCode: 229 });
+        press(input, 'Escape', { keyCode: 229 });
+        await nextFrame();
+        const ignoredComposition = progress() === 0 && accuracy() === '—' && !document.querySelector('.tg-pause');
+        press(input, 'a');
+        await nextFrame();
+        const acceptedEnglish = progress() === 17 && accuracy() === '100%';
+        press(input, 'A', { shiftKey: true });
+        press(input, ' ');
+        press(input, 'b');
+        press(input, 'Enter');
+        await nextFrame();
+        const acceptedOtherKeys = progress() === 83 && accuracy() === '100%';
+
+        input = await start();
+        input.blur();
+        window.dispatchEvent(new Event('blur'));
+        await nextFrame();
+        window.dispatchEvent(new Event('focus'));
+        await nextFrame();
+        const recoveredFocus = document.activeElement === input;
+        press(document.activeElement, 'a');
+        await nextFrame();
+        const acceptedAfterFocus = progress() === 17 && accuracy() === '100%';
+
+        window.dispatchEvent(new Event('blur'));
+        await nextFrame();
+        const pausedAfterStart = !!document.querySelector('.tg-pause');
+        press(input, 'A', { shiftKey: true });
+        await nextFrame();
+        const ignoredWhilePaused = progress() === 17;
+
+        result.textContent = [
+          ['组合键不计入成绩', ignoredComposition], ['缺少 compositionend 时接受首个英文键', acceptedEnglish],
+          ['大写、空格与换行仍可输入', acceptedOtherKeys], ['切换后恢复焦点', recoveredFocus],
+          ['恢复焦点后接受首个英文键', acceptedAfterFocus],
+          ['训练开始后失焦仍暂停', pausedAfterStart && ignoredWhilePaused],
+        ].map(([label, ok]) => `${ok ? 'PASS' : 'FAIL'} ${label}`).join('\n');
+      } finally {
+        replay.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

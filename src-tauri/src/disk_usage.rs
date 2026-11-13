@@ -302,6 +302,11 @@ fn scan_unix(
             .then_with(|| a.name.cmp(&b.name))
     });
     let (disk_total_bytes, disk_free_bytes) = crate::disk_cleaner::get_disk_capacity();
+    let permission_denied = if crate::macos_privacy::full_disk_access_granted() {
+        false
+    } else {
+        denied
+    };
     Ok(DiskUsageScan {
         supported: true,
         root_name: root_name(&path),
@@ -311,7 +316,7 @@ fn scan_unix(
         file_count,
         entries,
         volumes,
-        permission_denied: denied,
+        permission_denied,
         disk_total_bytes,
         disk_free_bytes,
     })

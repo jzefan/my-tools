@@ -67,9 +67,11 @@ async function idbSet(key: string, value: ArrayBuffer): Promise<void> {
   const db = await openKv();
   try {
     await new Promise<void>((resolve, reject) => {
-      const request = db.transaction('kv', 'readwrite').objectStore('kv').put(value, key);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error ?? new Error('无法保存本地数据库'));
+      const transaction = db.transaction('kv', 'readwrite');
+      transaction.objectStore('kv').put(value, key);
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error ?? new Error('保存已中断'));
+      transaction.onerror = () => reject(transaction.error ?? new Error('无法保存本地数据库'));
     });
   } finally {
     db.close();

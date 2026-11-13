@@ -195,3 +195,9 @@ function cloneState(state: SessionState): SessionState {
     items: state.items,
   };
 }
+
+/** Move the active clock forward when returning from a pause; typed progress is untouched. */
+export function resumeSession(state: SessionState, pausedMs: number): SessionState {
+  if (state.startedAt == null || state.phase === 'done' || !Number.isFinite(pausedMs) || pausedMs <= 0) return state;
+  return { ...state, startedAt: state.startedAt + pausedMs };
+}

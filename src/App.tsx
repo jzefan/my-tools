@@ -17,6 +17,7 @@ import {
   resolveLaunchTarget,
 } from './suites';
 import './App.css';
+import { enterTypingFullscreen, leaveTypingFullscreen } from './typing/fullscreen';
 
 // Lazy load views for optimal code-splitting and modular compilation
 const MergeView = lazy(() =>
@@ -157,11 +158,14 @@ export function App() {
       }
       return [...prev, { suiteId, tab }];
     });
+    if (suiteId === 'typing') void enterTypingFullscreen();
+    else void leaveTypingFullscreen();
     setActiveSuite(suiteId);
     setIsHomeView(false);
   }, []);
 
   const handleReturnHome = useCallback(() => {
+    void leaveTypingFullscreen();
     setIsHomeView(true);
   }, []);
 
@@ -350,7 +354,7 @@ export function App() {
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-slate-100 antialiased font-sans">
-      {multiSuite && (
+      {multiSuite && !isTypingActive && (
         <WorkspaceTabs
           suites={enabledSuites}
           openIds={openModules.map((module) => module.suiteId)}
@@ -374,7 +378,7 @@ export function App() {
 
       <div className={showHome ? 'hidden' : 'flex flex-1 min-h-0'}>
       {openModules.length > 0 && <>
-      <Sidebar
+      {!isTypingActive && <Sidebar
         activeSuite={activeSuite}
         activeTab={activeTab}
         setActiveTab={handleSelectTab}
@@ -382,7 +386,7 @@ export function App() {
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={() => setIsSidebarCollapsed((prev) => !prev)}
         flushTop={multiSuite}
-      />
+      />}
 
       <main className="flex-1 flex flex-col h-full overflow-hidden bg-white dark:bg-slate-950">
         <Suspense
@@ -493,7 +497,7 @@ export function App() {
           {isOpen('typing') && (
             <div className={`h-full min-h-0 flex-col flex-1 ${isTypingActive ? 'flex' : 'hidden'}`}>
               <TabErrorBoundary tabName="打字记词">
-                <TypingView activeSubTab={tabOf('typing')} />
+                <TypingView activeSubTab={tabOf('typing')} isActive={isTypingActive} onExit={multiSuite ? handleReturnHome : undefined} />
               </TabErrorBoundary>
             </div>
           )}

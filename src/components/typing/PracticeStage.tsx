@@ -1,300 +1,195 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Check, Star, Volume2, VolumeX } from 'lucide-react';
+import { Check, Pause, Play, Star, Volume2 } from 'lucide-react';
 import { Arcade } from './Arcade';
 import { HandGuide } from './HandGuide';
 import { ScreenKeyboard } from './ScreenKeyboard';
-import {
-  advanceItem,
-  applyKey,
-  currentExpected,
-  currentItem,
-  finalize,
-  penalize,
-  sessionStats,
-  shouldAssist,
-} from '../../typing/engine';
+import { advanceItem, applyKey, createSession, currentExpected, currentItem, finalize, penalize, sessionStats, shouldAssist, resumeSession } from '../../typing/engine';
 import { clock, displayGlyph, pct, wpmText } from '../../typing/format';
 import { fingersForChar } from '../../typing/keyboard';
-import { playTick, speak } from '../../typing/sound';
+import { playTick, speak, stopSpeaking } from '../../typing/sound';
+import type { SoundSettings } from '../../typing/preferences';
 import { loadWordMeta, lookupWordExtra, type WordExtra } from '../../typing/wordMeta';
 import type { PlayMode, PracticeItem, PracticeRun, SessionState } from '../../typing/types';
 
 interface PracticeStageProps {
-  run: PracticeRun;
-  sound: boolean;
-  starred: Set<number>;
-  mastered: Set<number>;
+  run: PracticeRun; sound: boolean; soundSettings: SoundSettings; suspended: boolean;
+  starred: Set<number>; mastered: Set<number>;
   onFinish: (state: SessionState, play: PlayMode) => void;
-  onToggleSound: () => void;
-  onStar: (wordId: number) => void;
-  onMaster: (wordId: number) => void;
+  onStar: (wordId: number) => void; onMaster: (wordId: number) => void;
 }
-
 const PLAYS: { id: PlayMode; label: string }[] = [
-  { id: 'focus', label: '专注' },
-  { id: 'mole', label: '地鼠' },
-  { id: 'shooter', label: '射击' },
-  { id: 'tower', label: '堆塔' },
+  { id: 'focus', label: '专注' }, { id: 'mole', label: '地鼠' },
+  { id: 'shooter', label: '射击' }, { id: 'tower', label: '堆塔' },
 ];
 
-export function PracticeStage({
-  run,
-  sound,
-  starred,
-  mastered,
-  onFinish,
-  onToggleSound,
-  onStar,
-  onMaster,
-}: PracticeStageProps) {
-  const [state, setState] = useState<SessionState>(() => ({
-    items: run.items,
-    index: 0,
-    charIndex: 0,
-    phase: run.items.length > 0 ? 'live' : 'done',
-    holdToken: 0,
-    startedAt: null,
-    endedAt: run.items.length > 0 ? null : 0,
-    correct: 0,
-    wrong: 0,
-    combo: 0,
-    pendingMisses: 0,
-    keyHits: {},
-    keyMisses: {},
-    itemWrong: run.items.map(() => 0),
-    wordResults: [],
-  }));
+function isCompositionKey(event: KeyboardEvent) {
+  // Some WebViews report the IME confirmation key as 229 after composition has ended.
+  return event.isComposing || event.key === 'Process' || event.keyCode === 229;
+}
+
+export function PracticeStage({ run, sound, soundSettings, suspended, starred, mastered, onFinish, onStar, onMaster }: PracticeStageProps) {
+  const [state, setState] = useState<SessionState>(() => createSession(run.items));
   const [play, setPlay] = useState<PlayMode>('focus');
-  const [fx, setFx] = useState({ hit: 0, miss: 0, hitChar: '' });
+  const [fx, setFx] = useState({ hit: 0, miss: 0, hitChar: '', pressed: '' });
   const [now, setNow] = useState(() => Date.now());
   const [ime, setIme] = useState(false);
-  const stateRef = useRef(state);
-  const playRef = useRef(play);
-  const soundRef = useRef(sound);
-  const onFinishRef = useRef(onFinish);
+  const [paused, setPaused] = useState(false);
+  const [focused, setFocused] = useState(true);
+  const stopped = paused || suspended;
+  const stateRef = useRef(state); stateRef.current = state;
+  const playRef = useRef(play); playRef.current = play;
+  const onFinishRef = useRef(onFinish); onFinishRef.current = onFinish;
+  const pauseAt = useRef<number | null>(null);
   const reported = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  stateRef.current = state;
-  playRef.current = play;
-  soundRef.current = sound;
-  onFinishRef.current = onFinish;
+  const resumeRef = useRef<HTMLButtonElement>(null);
+  const flashTimer = useRef<number | undefined>(undefined);
 
+  function update(next: SessionState) { stateRef.current = next; setState(next); }
   useEffect(() => {
-    inputRef.current?.focus();
-  }, [play]);
+    if (stopped) return;
+    inputRef.current?.focus({ preventScroll: true });
 
+    const restoreFocus = () => {
+      if (document.hidden) return;
+      const active = document.activeElement;
+      if (active == null || active === document.body || active === document.documentElement) {
+        inputRef.current?.focus({ preventScroll: true });
+      }
+    };
+    window.addEventListener('focus', restoreFocus);
+    document.addEventListener('visibilitychange', restoreFocus);
+    return () => {
+      window.removeEventListener('focus', restoreFocus);
+      document.removeEventListener('visibilitychange', restoreFocus);
+    };
+  }, [play, stopped]);
   useEffect(() => {
+    if (stopped) { pauseAt.current = Date.now(); stopSpeaking(); }
+    else if (pauseAt.current != null) {
+      update(resumeSession(stateRef.current, Date.now() - pauseAt.current));
+      pauseAt.current = null;
+      setNow(Date.now());
+    }
+  }, [stopped]);
+  useEffect(() => {
+    if (paused && !suspended) resumeRef.current?.focus();
+  }, [paused, suspended]);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !suspended && !isCompositionKey(e)) {
+        e.preventDefault();
+        setPaused(value => !value);
+      }
+    };
+    const away = () => {
+      if (stateRef.current.startedAt != null) setPaused(true);
+    };
+    const visibility = () => { if (document.hidden) away(); };
+    document.addEventListener('keydown', key);
+    document.addEventListener('visibilitychange', visibility);
+    window.addEventListener('blur', away);
+    return () => { document.removeEventListener('keydown', key); document.removeEventListener('visibilitychange', visibility); window.removeEventListener('blur', away); window.clearTimeout(flashTimer.current); stopSpeaking(); };
+  }, [suspended]);
+  useEffect(() => {
+    if (stopped) return;
     const timer = window.setInterval(() => setNow(Date.now()), 200);
     return () => window.clearInterval(timer);
-  }, []);
-
+  }, [stopped]);
   useEffect(() => {
     if (state.phase !== 'done' || reported.current) return;
     reported.current = true;
     onFinishRef.current(state, playRef.current);
   }, [state]);
-
   useEffect(() => {
-    if (!run.timedMs || !state.startedAt || state.phase === 'done') return;
-    const left = run.timedMs - (Date.now() - state.startedAt);
-    const timer = window.setTimeout(() => {
-      setState((prev) => {
-        const next = finalize(prev, Date.now());
-        stateRef.current = next;
-        return next;
-      });
-    }, Math.max(0, left));
+    if (stopped || state.phase !== 'hold') return;
+    const timer = window.setTimeout(() => update(advanceItem(stateRef.current, Date.now())), 280);
     return () => window.clearTimeout(timer);
-  }, [run.timedMs, state.startedAt, state.phase]);
-
+  }, [state.phase, state.holdToken, stopped]);
+  useEffect(() => {
+    if (stopped || !run.timedMs || state.startedAt == null || state.phase === 'done') return;
+    const deadline = state.startedAt + run.timedMs;
+    const timer = window.setTimeout(() => update(finalize(stateRef.current, deadline)), Math.max(0, deadline - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [run.timedMs, state.startedAt, state.phase, stopped]);
   useEffect(() => {
     const item = state.items[state.index];
-    if (!item || !run.speakOnShow || state.phase === 'done') return;
-    speak(item.speak || item.prompt);
-  }, [state.index, run.speakOnShow, state.items]);
+    if (!stopped && item && run.speakOnShow && state.phase !== 'done') speak(item.speak || item.prompt);
+  }, [state.index, run.speakOnShow, state.items, stopped]);
 
-  function commit(next: SessionState, kind: string, hitChar: string) {
-    stateRef.current = next;
-    setState(next);
-    if (kind === 'hit' || kind === 'need-advance') {
-      if (soundRef.current) playTick(true);
-      setFx((prev) => ({ hit: prev.hit + 1, miss: prev.miss, hitChar }));
-    }
-    if (kind === 'miss') {
-      if (soundRef.current) playTick(false);
-      setFx((prev) => ({ ...prev, miss: prev.miss + 1 }));
-    }
-    if (kind === 'need-advance') {
-      const token = next.holdToken;
-      window.setTimeout(() => {
-        if (stateRef.current.holdToken !== token || stateRef.current.phase === 'done') return;
-        const advanced = advanceItem(stateRef.current, Date.now());
-        stateRef.current = advanced;
-        setState(advanced);
-      }, 280);
-    }
+  function commit(next: SessionState, kind: string, hitChar: string, key = '') {
+    update(next);
+    if (sound) playTick(kind !== 'miss', soundSettings, key);
+    if (kind === 'hit' || kind === 'need-advance') setFx(prev => ({ ...prev, hit: prev.hit + 1, hitChar, pressed: key }));
+    else if (kind === 'miss') setFx(prev => ({ ...prev, miss: prev.miss + 1, pressed: key }));
+    else setFx(prev => ({ ...prev, pressed: key }));
+    window.clearTimeout(flashTimer.current);
+    flashTimer.current = window.setTimeout(() => setFx(prev => ({ ...prev, pressed: '' })), 110);
   }
-
   function onKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
-    if (event.metaKey || event.ctrlKey || event.altKey || event.nativeEvent.isComposing) return;
+    if (stopped || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (isCompositionKey(event.nativeEvent)) {
+      setIme(true);
+      return;
+    }
+    if (event.key.length !== 1 && event.key !== 'Backspace' && event.key !== 'Enter') return;
+    // A source switch can interrupt composition without sending compositionend.
+    // The current keyboard event decides whether typing can resume.
+    setIme(false);
     event.preventDefault();
     const before = currentExpected(stateRef.current);
-    const result = applyKey(stateRef.current, { key: event.key, repeat: event.repeat }, {
-      allowBackspace: run.allowBackspace,
-      now: Date.now(),
-    });
-    if (result.kind === 'ignore') return;
-    commit(result.state, result.kind, before ?? '');
+    const result = applyKey(stateRef.current, { key: event.key, repeat: event.repeat }, { allowBackspace: run.allowBackspace, now: Date.now() });
+    if (result.kind !== 'ignore') commit(result.state, result.kind, before ?? '', event.key);
   }
-
   function breach() {
+    if (stopped) return;
     const next = penalize(stateRef.current, Date.now());
-    if (next === stateRef.current) return;
-    commit(next, 'miss', '');
+    if (next !== stateRef.current) commit(next, 'miss', '');
   }
-
-  const item = currentItem(state);
-  const expected = currentExpected(state);
+  const item = currentItem(state), expected = currentExpected(state);
   const assist = shouldAssist(run.assist, state);
-  const stats = sessionStats(state, now);
+  const stats = sessionStats(state, stopped ? pauseAt.current ?? now : now);
   const total = stats.correct + stats.wrong;
   const progress = item ? (state.index + Math.min(1, state.charIndex / Math.max(1, item.prompt.length))) / state.items.length : 0;
-  const remain = run.timedMs == null
-    ? null
-    : state.startedAt == null
-      ? run.timedMs
-      : Math.max(0, run.timedMs - (now - state.startedAt));
+  const remain = run.timedMs == null ? null : Math.max(0, run.timedMs - stats.durationMs);
   const fingers = fingersForChar(assist ? expected : null);
 
-  return (
-    <div
-      className="flex h-full min-h-0 flex-col overflow-hidden bg-white dark:bg-slate-950"
-      onMouseDown={() => inputRef.current?.focus()}
-    >
-      <input
-        ref={inputRef}
-        aria-label="打字"
-        className="fixed top-0 -left-8 h-px w-px opacity-0"
-        autoCapitalize="off"
-        autoCorrect="off"
-        spellCheck={false}
-        value=""
-        onChange={() => undefined}
-        onKeyDown={onKeyDown}
-        onCompositionStart={() => setIme(true)}
-        onCompositionEnd={() => setIme(false)}
-      />
-      <div className="h-0.5 bg-slate-100 dark:bg-slate-800">
-        <div className="h-full bg-indigo-500" style={{ width: `${Math.min(100, progress * 100)}%` }} />
+  return <div className="tg-stage" onClick={event => { if (!stopped && !(event.target as HTMLElement).closest('button, input, a, select')) inputRef.current?.focus(); }}>
+    <input
+      ref={inputRef}
+      aria-label="打字"
+      className="tg-capture"
+      lang="en"
+      autoCapitalize="off"
+      autoCorrect="off"
+      spellCheck={false}
+      value=""
+      onChange={() => undefined}
+      onKeyDown={onKeyDown}
+      onFocus={() => setFocused(true)}
+      onBlur={() => {
+        setFocused(false);
+        setIme(false);
+      }}
+      onCompositionStart={() => setIme(true)}
+      onCompositionEnd={() => setIme(false)}
+    />
+    <header className="tg-stage-header"><div className="tg-run-title"><span className="tg-eyebrow">TRAINING IN PROGRESS</span><h1>{run.title}</h1></div>
+      <div className="tg-play-modes" aria-label="练习玩法">{PLAYS.map(option => <button key={option.id} aria-pressed={play === option.id} onClick={() => { setPlay(option.id); inputRef.current?.focus(); }}>{option.label}</button>)}</div>
+      <button className="tg-icon" aria-label="暂停训练" title="暂停 · Esc" onClick={() => setPaused(true)}><Pause/></button>
+    </header>
+    <div className="tg-hud"><div><span>速度</span><strong>{total > 0 ? wpmText(stats.wpm) : '—'}<small>WPM</small></strong></div><div><span>正确率</span><strong>{total > 0 ? pct(stats.accuracy) : '—'}</strong></div><div className={state.combo >= 10 ? 'tg-combo is-hot' : 'tg-combo'}><span>连续命中</span><strong key={Math.floor(state.combo / 10)}>{state.combo.toString().padStart(2, '0')}<small>COMBO</small></strong></div><div><span>{remain == null ? '进度' : '倒计时'}</span><strong>{remain == null ? `${Math.min(state.index + 1, state.items.length)} / ${state.items.length}` : clock(remain)}</strong></div></div>
+    <div className="tg-progress" role="progressbar" aria-label="练习进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}><i style={{ transform: `scaleX(${progress})` }}/></div>
+    <div className={`tg-practice-area tg-mode-${play}`}>
+      <div className="tg-live-status" role="status">{ime ? '请切换到英文输入法' : !focused && !stopped ? <button onClick={() => inputRef.current?.focus()}>点击此处，继续输入</button> : state.startedAt == null ? '敲下第一个字母，开始训练' : state.phase === 'hold' ? '✓ 完成' : state.pendingMisses > 0 ? '再试一次，节奏还在。' : state.combo >= 10 ? `${state.combo} 连击 · 保持节奏` : '\u00a0'}</div>
+      <div className={`tg-target ${state.pendingMisses ? 'tg-target-miss' : ''}`}>
+        {play === 'focus' ? item && <PracticeBody item={item} state={state} run={run}/> : <>{item && <div className="tg-arcade-prompt"><Prompt item={item} state={state} run={run}/><Glyphs item={item} state={state} mono={run.mono}/></div>}<Arcade mode={play} glyph={assist && expected ? displayGlyph(expected) : '?'} hitTick={fx.hit} missTick={fx.miss} hitChar={fx.hitChar} active={!stopped && state.startedAt != null && state.phase === 'live'} onBreach={breach}/></>}
       </div>
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-200 px-3 py-1.5 dark:border-slate-800">
-        <div className="min-w-0 truncate text-sm font-medium text-slate-800 dark:text-slate-100">
-          {run.title}
-        </div>
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-          <div className="inline-flex rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800">
-            {PLAYS.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => setPlay(option.id)}
-                className={`rounded-md px-2 py-1 text-xs ${
-                  play === option.id
-                    ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-slate-100'
-                    : 'text-slate-500'
-                }`}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-2 text-xs tabular-nums text-slate-500">
-            <span>{total > 0 ? wpmText(stats.wpm) : '—'}</span>
-            <span>{total > 0 ? pct(stats.accuracy) : '—'}</span>
-            {remain != null && <span>{clock(remain)}</span>}
-            {remain == null && <span>{state.index + 1}/{state.items.length}</span>}
-          </div>
-          <button
-            type="button"
-            title={sound ? '关闭按键声' : '打开按键声'}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={onToggleSound}
-            className="text-slate-400 hover:text-slate-600"
-          >
-            {sound ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-          </button>
-          <button
-            type="button"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => {
-              setState((prev) => {
-                const next = finalize(prev, Date.now());
-                stateRef.current = next;
-                return next;
-              });
-            }}
-            className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
-          >
-            结束
-          </button>
-        </div>
-      </header>
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        {play === 'focus' && (
-          <aside className="hidden w-44 shrink-0 border-r border-slate-200 px-3 py-4 md:block dark:border-slate-800">
-            <HandGuide fingers={fingers} />
-          </aside>
-        )}
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden px-6 py-3">
-          {ime && <div className="mb-2 shrink-0 text-center text-xs text-amber-600">请切换到英文输入</div>}
-          <div className={`min-h-0 flex-1 ${play === 'focus' ? 'overflow-y-auto' : 'flex flex-col overflow-hidden'}`}>
-            {play === 'focus' || !item ? (
-              item && <PracticeBody item={item} state={state} run={run} />
-            ) : (
-              <>
-                {item && <Prompt item={item} state={state} run={run} />}
-                <Arcade
-                  mode={play}
-                  glyph={assist && expected ? displayGlyph(expected) : '?'}
-                  hitTick={fx.hit}
-                  missTick={fx.miss}
-                  hitChar={fx.hitChar}
-                  active={state.startedAt != null}
-                  onBreach={breach}
-                />
-              </>
-            )}
-          </div>
-          {item?.wordId != null && (
-            <div className="mt-3 flex justify-center gap-2">
-              <IconButton
-                title="朗读"
-                onClick={() => speak(item.speak || item.prompt)}
-              >
-                <Volume2 className="h-3.5 w-3.5" />
-              </IconButton>
-              <IconButton
-                title={starred.has(item.wordId) ? '取消收藏' : '收藏'}
-                onClick={() => onStar(item.wordId!)}
-                active={starred.has(item.wordId)}
-              >
-                <Star className={`h-3.5 w-3.5 ${starred.has(item.wordId) ? 'fill-current' : ''}`} />
-              </IconButton>
-              <IconButton
-                title={mastered.has(item.wordId) ? '恢复练习' : '已掌握'}
-                onClick={() => onMaster(item.wordId!)}
-                active={mastered.has(item.wordId)}
-              >
-                <Check className="h-3.5 w-3.5" />
-              </IconButton>
-            </div>
-          )}
-        </div>
-      </div>
-      <ScreenKeyboard expected={expected} assist={assist} />
+      {item?.wordId != null && <div className="tg-word-actions"><IconButton title="朗读" onClick={() => { speak(item.speak || item.prompt); inputRef.current?.focus(); }}><Volume2 size={15}/></IconButton><IconButton title={starred.has(item.wordId) ? '取消收藏' : '收藏'} onClick={() => onStar(item.wordId!)} active={starred.has(item.wordId)}><Star size={15} fill={starred.has(item.wordId) ? 'currentColor' : 'none'}/></IconButton><IconButton title={mastered.has(item.wordId) ? '恢复练习' : '已掌握'} onClick={() => onMaster(item.wordId!)} active={mastered.has(item.wordId)}><Check size={15}/></IconButton></div>}
     </div>
-  );
+    <div className="tg-keyboard-deck"><div className="tg-hand"><HandGuide fingers={fingers}/></div><ScreenKeyboard expected={expected} assist={assist} pressed={fx.pressed}/><div className="tg-key-legend"><span><kbd>Esc</kbd>暂停</span><span><kbd>⇧</kbd>大写</span><span><kbd>↵</kbd>换行</span></div></div>
+    {paused && !suspended && <div className="tg-pause-backdrop"><section role="dialog" aria-modal="true" aria-labelledby="tg-pause-title" className="tg-pause" onKeyDown={e => { if (e.key === 'Tab') { const buttons = e.currentTarget.querySelectorAll('button'); if (e.shiftKey && document.activeElement === buttons[0]) { e.preventDefault(); buttons[1].focus(); } else if (!e.shiftKey && document.activeElement === buttons[1]) { e.preventDefault(); buttons[0].focus(); } } }}><span className="tg-eyebrow">TAKE A BREATH</span><h2 id="tg-pause-title">训练已暂停</h2><p>进度已保留，准备好就继续。</p><button ref={resumeRef} className="tg-button tg-primary" onClick={() => setPaused(false)}><Play size={16}/>继续训练</button><button className="tg-button" onClick={() => update(finalize(stateRef.current, pauseAt.current ?? Date.now()))}>结束并结算</button></section></div>}
+  </div>;
 }
 
 function PracticeBody({ item, state, run }: { item: PracticeItem; state: SessionState; run: PracticeRun }) {
@@ -311,7 +206,7 @@ function PracticeBody({ item, state, run }: { item: PracticeItem; state: Session
       {item.meaning && (
         <div className="flex max-w-2xl items-start justify-center gap-2 text-center">
           <p className="text-sm leading-6 text-slate-500">{item.meaning}</p>
-          {item.speak && (
+          {item.speak && item.wordId == null && (
             <button type="button" title="朗读" onMouseDown={(event) => event.preventDefault()} onClick={() => speak(item.speak || item.prompt)} className="mt-0.5 text-slate-400 hover:text-slate-700">
               <Volume2 className="h-3.5 w-3.5" />
             </button>
@@ -430,36 +325,14 @@ function Prompt({ item, state, run }: { item: PracticeItem; state: SessionState;
 function Glyphs({ item, state, mono }: { item: PracticeItem; state: SessionState; mono: boolean }) {
   const chars = [...item.prompt];
   const conceal = item.conceal === true && state.phase === 'live';
-  const flow = item.prompt.includes(' ');
-  const size = chars.length > 28 ? 'text-xl' : 'text-4xl';
-  return (
-    <div className={flow
-      ? `max-w-2xl text-left text-lg leading-8 ${mono ? 'font-mono text-base' : ''}`
-      : `flex flex-wrap justify-center gap-x-px leading-relaxed ${size} ${mono ? 'font-mono text-lg' : 'font-medium'}`}>
-      {chars.map((ch, index) => {
-        if (ch === '\n') return <span key={`${item.id}-${index}`} className="basis-full block h-3" />;
-        const done = index < state.charIndex;
-        const current = index === state.charIndex && state.phase === 'live';
-        const hidden = conceal && !done;
-        const space = ch === ' ';
-        if (flow && space) return <span key={`${item.id}-${index}`}> </span>;
-        const tone = hidden
-          ? 'text-transparent'
-          : done
-            ? 'text-emerald-600'
-            : current && state.pendingMisses > 0
-              ? 'text-rose-600'
-              : current
-                ? 'text-slate-900 underline decoration-indigo-500 decoration-2 underline-offset-4 dark:text-slate-100'
-                : 'text-slate-300 dark:text-slate-600';
-        return (
-          <span key={`${item.id}-${index}`} className={flow ? tone : `px-px ${tone}`}>
-            {ch}
-          </span>
-        );
-      })}
-    </div>
-  );
+  return <div className={`tg-glyphs ${chars.length > 28 ? 'tg-glyphs-long' : ''} ${mono ? 'tg-glyphs-mono' : ''}`} aria-label={conceal ? '输入单词' : item.prompt}>
+    {chars.map((ch, index) => {
+      const done = index < state.charIndex, current = index === state.charIndex && state.phase === 'live';
+      const hidden = conceal && !done && !(current && state.pendingMisses >= 3);
+      const tone = done ? 'is-done' : current && state.pendingMisses > 0 ? 'is-wrong' : current ? 'is-current' : '';
+      return <span key={`${item.id}-${index}`} className={`${tone} ${ch === ' ' ? 'is-space' : ''}`} aria-hidden="true">{hidden ? '_' : ch === ' ' ? '\u00a0' : ch === '\n' ? '↵' : ch}{ch === '\n' && <br/>}</span>;
+    })}
+  </div>;
 }
 
 function IconButton({
@@ -477,13 +350,11 @@ function IconButton({
     <button
       type="button"
       title={title}
+      aria-label={title}
       onMouseDown={(event) => event.preventDefault()}
       onClick={onClick}
-      className={`rounded-md border px-2 py-1 ${
-        active
-          ? 'border-indigo-200 text-indigo-600 dark:border-indigo-800'
-          : 'border-slate-200 text-slate-400 hover:text-slate-600 dark:border-slate-700'
-      }`}
+      className={`tg-icon ${active ? 'is-active' : ''}`}
+      aria-pressed={active}
     >
       {children}
     </button>

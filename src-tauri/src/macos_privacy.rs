@@ -22,13 +22,39 @@ pub fn prepare_privacy_identity() {
 pub fn full_disk_access_granted() -> bool {
     #[cfg(target_os = "macos")]
     {
+        // 1. TimeMachine preference file requires Full Disk Access to read.
+        if std::fs::File::open("/Library/Preferences/com.apple.TimeMachine.plist").is_ok() {
+            return true;
+        }
+
         let Some(home) = dirs::home_dir() else {
             return false;
         };
-        return std::fs::File::open(
+
+        // 2. Standard user directories protected strictly by Full Disk Access.
+        for dir in [
+            home.join("Library/Safari"),
+            home.join(".Trash"),
+            home.join("Library/Mail"),
+            home.join("Library/Messages"),
+            home.join("Library/Containers/com.apple.Safari"),
+        ] {
+            if std::fs::read_dir(&dir).is_ok() {
+                return true;
+            }
+        }
+
+        // 3. User files protected by Full Disk Access.
+        for file in [
+            home.join("Library/Safari/Bookmarks.plist"),
             home.join("Library/Application Support/com.apple.TCC/TCC.db"),
-        )
-        .is_ok();
+        ] {
+            if std::fs::File::open(&file).is_ok() {
+                return true;
+            }
+        }
+
+        false
     }
     #[cfg(not(target_os = "macos"))]
     false
@@ -37,12 +63,16 @@ pub fn full_disk_access_granted() -> bool {
 pub fn register_for_full_disk_access() {
     #[cfg(target_os = "macos")]
     {
+        let _ = std::fs::File::open("/Library/Preferences/com.apple.TimeMachine.plist");
+
         let Some(home) = dirs::home_dir() else {
             return;
         };
         // Opening these is denied without Full Disk Access. The denial is what
         // puts the responsible executable into the list, unchecked.
         for path in [
+            home.join("Library/Safari"),
+            home.join(".Trash"),
             home.join("Library/Application Support/com.apple.TCC/TCC.db"),
             home.join("Library/Mail"),
             home.join("Library/Messages"),
