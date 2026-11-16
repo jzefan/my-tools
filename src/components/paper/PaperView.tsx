@@ -11,6 +11,7 @@ import { confirmDialog, alertDialog } from '../../utils/dialog';
 import { extractNumberedReferences } from '../../utils/citations';
 import { clampPaperPage } from '../../utils/paperReader';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { isTauriEnvironment } from '../../services/api';
 
 interface PaperViewProps { initialFile?: string; activeSubTab?: string; onSubTabChange?: (subTab: string) => void }
 export function PaperView({ initialFile, activeSubTab, onSubTabChange }: PaperViewProps) {
@@ -123,6 +124,7 @@ export function PaperView({ initialFile, activeSubTab, onSubTabChange }: PaperVi
     importedInitial.current = initialFile; void importRef.current([initialFile]);
   }, [initialFile, loading, loadError]);
   useEffect(() => {
+    if (!isTauriEnvironment()) return;
     let disposed = false; let unlisten: (() => void) | undefined;
     try { void getCurrentWebview().onDragDropEvent(event => {
       if (event.payload.type === 'drop') void importRef.current(event.payload.paths.filter(path => /\.(pdf|docx|doc)$/i.test(path)));

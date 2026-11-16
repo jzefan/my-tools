@@ -8,7 +8,11 @@ import {
   DiskUsageEntry,
   DiskUsageScan,
   UsageDeleteResult,
+  InstalledAppItem,
+  UninstallAppsRequest,
+  UninstallAppsResult,
 } from '../types/cleaner';
+import { computeUninstallSummary, sumResidualBytes } from '../utils/appUninstaller';
 
 class CleanerApiService {
   async scanDiskCleanItems(): Promise<DiskCleanScanResult> {
@@ -217,6 +221,33 @@ class CleanerApiService {
     if (!isTauriEnvironment()) return false;
     return await invoke<boolean>('full_disk_access_enabled');
   }
+
+  async scanInstalledApps(): Promise<InstalledAppItem[]> {
+    if (isTauriEnvironment()) {
+      try {
+        return await invoke<InstalledAppItem[]>('scan_installed_apps');
+      } catch (err) {
+        console.warn('Native scan_installed_apps failed, using fallback:', err);
+      }
+    }
+    return mockInstalledApps.filter((app) => !uninstalledMockAppIds.has(app.id));
+  }
+
+  async uninstallApps(request: UninstallAppsRequest): Promise<UninstallAppsResult> {
+    if (isTauriEnvironment()) {
+      try {
+        return await invoke<UninstallAppsResult>('uninstall_apps', { request });
+      } catch (err) {
+        console.warn('Native uninstall_apps failed, using fallback:', err);
+      }
+    }
+    const available = mockInstalledApps.filter((app) => !uninstalledMockAppIds.has(app.id));
+    const result = computeUninstallSummary(available, request.targets);
+    for (const outcome of result.outcomes) {
+      uninstalledMockAppIds.add(outcome.app_id);
+    }
+    return result;
+  }
 }
 
 export const cleanerApi = new CleanerApiService();
@@ -337,3 +368,206 @@ function mockDiskUsage(path: string): DiskUsageScan {
     ])
   );
 }
+
+const MiB = 1024 ** 2;
+const uninstalledMockAppIds = new Set<string>();
+
+function createMockApp(
+  item: Omit<InstalledAppItem, 'residual_size_bytes'>
+): InstalledAppItem {
+  return {
+    ...item,
+    residual_size_bytes: sumResidualBytes(item.residuals),
+  };
+}
+
+const mockInstalledApps: InstalledAppItem[] = [
+  createMockApp({
+    id: 'app_photoshop',
+    name: 'Adobe Photoshop 2025',
+    bundle_id: 'com.adobe.Photoshop',
+    version: '26.3.0',
+    category: '设计创意',
+    app_path: '/Applications/Adobe Photoshop 2025/Adobe Photoshop 2025.app',
+    app_size_bytes: Math.round(3.2 * GiB),
+    last_used_at: Date.now() - 12 * 86400 * 1000,
+    residuals: [
+      {
+        id: 'ps_cache',
+        name: 'Photoshop 暂存盘与渲染缓存',
+        path: '~/Library/Caches/Adobe/Photoshop 2025',
+        size_bytes: 980 * MiB,
+        file_count: 4320,
+        kind: 'cache',
+      },
+      {
+        id: 'ps_support',
+        name: 'Adobe 预设、插件与字体支持文件',
+        path: '~/Library/Application Support/Adobe/Adobe Photoshop 2025',
+        size_bytes: 460 * MiB,
+        file_count: 1850,
+        kind: 'support',
+      },
+      {
+        id: 'ps_logs',
+        name: '崩溃日志与运行诊断记录',
+        path: '~/Library/Logs/Adobe/Photoshop',
+        size_bytes: 42 * MiB,
+        file_count: 210,
+        kind: 'logs',
+      },
+    ],
+  }),
+  createMockApp({
+    id: 'app_docker',
+    name: 'Docker Desktop',
+    bundle_id: 'com.docker.docker',
+    version: '4.38.0',
+    category: '开发工具',
+    app_path: '/Applications/Docker.app',
+    app_size_bytes: Math.round(1.9 * GiB),
+    last_used_at: Date.now() - 3 * 86400 * 1000,
+    residuals: [
+      {
+        id: 'docker_vm',
+        name: '虚拟磁盘镜像与容器缓存 (Docker.raw)',
+        path: '~/Library/Containers/com.docker.docker/Data/vms',
+        size_bytes: 580 * MiB,
+        file_count: 68,
+        kind: 'container',
+      },
+      {
+        id: 'docker_logs',
+        name: '守护进程与引擎日志',
+        path: '~/Library/Group Containers/group.com.docker/logs',
+        size_bytes: 60 * MiB,
+        file_count: 340,
+        kind: 'logs',
+      },
+    ],
+  }),
+  createMockApp({
+    id: 'app_wechat',
+    name: '微信 (WeChat)',
+    bundle_id: 'com.tencent.xinWeChat',
+    version: '4.0.3',
+    category: '社交通讯',
+    app_path: '/Applications/WeChat.app',
+    app_size_bytes: 680 * MiB,
+    last_used_at: Date.now() - 1 * 86400 * 1000,
+    residuals: [
+      {
+        id: 'wx_container',
+        name: '聊天多媒体与小程序沙盒数据',
+        path: '~/Library/Containers/com.tencent.xinWeChat/Data',
+        size_bytes: 345 * MiB,
+        file_count: 9120,
+        kind: 'container',
+      },
+      {
+        id: 'wx_prefs',
+        name: '偏好设置与账号配置缓存',
+        path: '~/Library/Preferences/com.tencent.xinWeChat.plist',
+        size_bytes: 18 * MiB,
+        file_count: 24,
+        kind: 'preferences',
+      },
+    ],
+  }),
+  createMockApp({
+    id: 'app_chrome',
+    name: 'Google Chrome',
+    bundle_id: 'com.google.Chrome',
+    version: '134.0.6998',
+    category: '网络浏览器',
+    app_path: '/Applications/Google Chrome.app',
+    app_size_bytes: 540 * MiB,
+    last_used_at: Date.now() - 2 * 86400 * 1000,
+    residuals: [
+      {
+        id: 'chrome_profile',
+        name: '用户配置、扩展程序与网页离线存储',
+        path: '~/Library/Application Support/Google/Chrome',
+        size_bytes: 215 * MiB,
+        file_count: 5400,
+        kind: 'support',
+      },
+      {
+        id: 'chrome_cache',
+        name: '媒体与脚本缓存',
+        path: '~/Library/Caches/Google/Chrome',
+        size_bytes: 95 * MiB,
+        file_count: 3200,
+        kind: 'cache',
+      },
+    ],
+  }),
+  createMockApp({
+    id: 'app_raycast',
+    name: 'Raycast',
+    bundle_id: 'com.raycast.macos',
+    version: '1.93.2',
+    category: '效率启动',
+    app_path: '/Applications/Raycast.app',
+    app_size_bytes: 120 * MiB,
+    last_used_at: Date.now() - 5 * 86400 * 1000,
+    residuals: [
+      {
+        id: 'raycast_support',
+        name: '扩展插件与剪贴板索引',
+        path: '~/Library/Application Support/com.raycast.macos',
+        size_bytes: 24 * MiB,
+        file_count: 145,
+        kind: 'support',
+      },
+      {
+        id: 'raycast_prefs',
+        name: '快捷键与偏好配置',
+        path: '~/Library/Preferences/com.raycast.macos.plist',
+        size_bytes: 2 * MiB,
+        file_count: 4,
+        kind: 'preferences',
+      },
+    ],
+  }),
+  createMockApp({
+    id: 'app_typora',
+    name: 'Typora',
+    bundle_id: 'abnerworks.Typora',
+    version: '1.9.5',
+    category: '文档写作',
+    app_path: '/Applications/Typora.app',
+    app_size_bytes: 95 * MiB,
+    last_used_at: Date.now() - 20 * 86400 * 1000,
+    residuals: [
+      {
+        id: 'typora_support',
+        name: '主题样式与草稿自动备份',
+        path: '~/Library/Application Support/abnerworks.Typora',
+        size_bytes: 48 * MiB,
+        file_count: 320,
+        kind: 'support',
+      },
+    ],
+  }),
+  createMockApp({
+    id: 'app_keka',
+    name: 'Keka',
+    bundle_id: 'com.aone.keka',
+    version: '1.4.8',
+    category: '系统工具',
+    app_path: '/Applications/Keka.app',
+    app_size_bytes: 78 * MiB,
+    last_used_at: Date.now() - 40 * 86400 * 1000,
+    residuals: [
+      {
+        id: 'keka_prefs',
+        name: '压缩规则配置与缓存',
+        path: '~/Library/Containers/com.aone.keka/Data/Library/Preferences',
+        size_bytes: 6 * MiB,
+        file_count: 14,
+        kind: 'preferences',
+      },
+    ],
+  }),
+];

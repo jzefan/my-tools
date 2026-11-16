@@ -6,7 +6,7 @@ import { HomeView } from './components/home/HomeView';
 import { FinderColumnMergeView } from './components/FinderColumnMergeView';
 import { TabErrorBoundary } from './components/common/TabErrorBoundary';
 import { LoadingState } from './components/common/LoadingState';
-import { api } from './services/api';
+import { api, isTauriEnvironment } from './services/api';
 import { IntegrationStatus, LaunchContext } from './types';
 import {
   SuiteId,
@@ -209,6 +209,7 @@ export function App() {
   // Handle entering quick merge mode (compact floating modal over Finder)
   const enterQuickMergeMode = useCallback(async (_ctx: LaunchContext) => {
     setIsQuickMergeMode(true);
+    if (!isTauriEnvironment()) return;
     try {
       const win = getCurrentWindow();
       await win.show();
@@ -262,6 +263,7 @@ export function App() {
 
   // Handle close in quick merge mode (dismiss floating HUD)
   const handleClose = useCallback(async () => {
+    if (!isTauriEnvironment()) return;
     try {
       const win = getCurrentWindow();
       await win.hide();

@@ -7,6 +7,7 @@ export type PaperSubTab = 'paper' | 'paper_library' | 'paper_reader' | 'paper_ed
 export type CleanerSubTab =
   | 'cleaner_usage'
   | 'cleaner'
+  | 'cleaner_uninstall'
   | 'cleaner_wechat'
   | 'cleaner_qq'
   | 'cleaner_developer'

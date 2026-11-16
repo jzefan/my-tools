@@ -26,6 +26,7 @@ import {
 } from '../../types/cleaner';
 import { cleanerApi } from '../../services/cleanerApi';
 import { DiskUsageView } from './DiskUsageView';
+import { AppUninstallerView } from './AppUninstallerView';
 import { api } from '../../services/api';
 import { formatDiskSize, formatFileSize } from '../../utils/format';
 import { confirmDialog, alertDialog } from '../../utils/dialog';
@@ -79,13 +80,15 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
   }, []);
 
   const [usageVisited, setUsageVisited] = useState(activeSubTab === 'cleaner_usage');
+  const [uninstallVisited, setUninstallVisited] = useState(activeSubTab === 'cleaner_uninstall');
   const didScanRef = useRef(false);
   useEffect(() => {
     if (activeSubTab === 'cleaner_usage') setUsageVisited(true);
+    if (activeSubTab === 'cleaner_uninstall') setUninstallVisited(true);
   }, [activeSubTab]);
 
   useEffect(() => {
-    if (activeSubTab === 'cleaner_usage') return;
+    if (activeSubTab === 'cleaner_usage' || activeSubTab === 'cleaner_uninstall') return;
     if (didScanRef.current) return;
     didScanRef.current = true;
     void handleScan();
@@ -385,6 +388,8 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
       : 0;
 
   const usageActive = activeSubTab === 'cleaner_usage';
+  const uninstallActive = activeSubTab === 'cleaner_uninstall';
+  const mainCleanerActive = !usageActive && !uninstallActive;
 
   return (
     <>
@@ -393,10 +398,15 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
           <DiskUsageView />
         </div>
       )}
-      {!usageActive && scanResult?.supported === false && (
+      {uninstallVisited && (
+        <div className={uninstallActive ? 'flex h-full min-h-0 flex-1 flex-col' : 'hidden'}>
+          <AppUninstallerView />
+        </div>
+      )}
+      {mainCleanerActive && scanResult?.supported === false && (
         <div className="flex h-full items-center justify-center text-sm text-slate-500 dark:text-slate-400">磁盘清理暂仅支持macOS</div>
       )}
-      {!usageActive && scanResult?.supported !== false && (
+      {mainCleanerActive && scanResult?.supported !== false && (
     <div className="flex-1 flex flex-col h-full overflow-hidden bg-slate-50/50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 select-none">
       {/* Top Header & Storage Dashboard */}
       <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shadow-2xs shrink-0">

@@ -47,6 +47,7 @@ const lucideDummy = 'data:text/javascript;base64,' + Buffer.from(`
   export const Clock = dummy;
   export const MessageSquareText = dummy;
   export const Wrench = dummy;
+  export const PackageX = dummy;
 `).toString('base64');
 
 const mediaTypesUrl = moduleUrl('../src/types/media.ts');

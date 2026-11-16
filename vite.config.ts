@@ -50,7 +50,9 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
-  const suiteTarget = process.env.VITE_SUITE_TARGET || (['docs', 'paper', 'cleaner', 'netdisk', 'typing'].includes(mode) ? mode : 'all');
+  const suiteModes = ['docs', 'paper', 'cleaner', 'netdisk', 'typing', 'media'];
+  const suiteTarget = suiteModes.includes(mode) ? mode : 'all';
+  process.env.VITE_SUITE_TARGET = suiteTarget;
 
   return {
     define: {
@@ -62,18 +64,12 @@ export default defineConfig(({ mode }) => {
     //
     // 1. prevent Vite from obscuring rust errors
     clearScreen: false,
-    // 2. tauri expects a fixed port, fail if that port is not available
+    // 2. bind to 0.0.0.0:3000 for web preview; Tauri dev can override via TAURI_DEV_HOST
     server: {
-      port: 1420,
+      port: 3000,
       strictPort: true,
-      host: host || false,
-      hmr: host
-        ? {
-            protocol: "ws",
-            host,
-            port: 1421,
-          }
-        : undefined,
+      host: host || '0.0.0.0',
+      allowedHosts: true,
       watch: {
         // 3. tell Vite to ignore watching `src-tauri`
         ignored: ["**/src-tauri/**"],

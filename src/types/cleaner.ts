@@ -95,3 +95,55 @@ export interface DiskUsageProgress {
   scanned_bytes: number;
   home_path: string;
 }
+
+export type AppResidualKind = 'cache' | 'support' | 'logs' | 'preferences' | 'container';
+
+export interface AppResidualItem {
+  id: string;
+  name: string;
+  path: string;
+  size_bytes: number;
+  file_count: number;
+  kind: AppResidualKind;
+}
+
+export interface InstalledAppItem {
+  id: string;
+  name: string;
+  bundle_id: string;
+  version: string;
+  category: string;
+  app_path: string;
+  app_size_bytes: number;
+  residual_size_bytes: number;
+  residuals: AppResidualItem[];
+  last_used_at?: number;
+}
+
+export interface UninstallAppTarget {
+  app_id: string;
+  delete_residuals: boolean;
+}
+
+export interface UninstallAppsRequest {
+  targets: UninstallAppTarget[];
+}
+
+export interface UninstalledAppOutcome {
+  app_id: string;
+  app_name: string;
+  freed_app_bytes: number;
+  freed_residual_bytes: number;
+  retained_residual_bytes: number;
+  deleted_residuals: boolean;
+}
+
+export interface UninstallAppsResult {
+  success: boolean;
+  freed_bytes: number;
+  freed_app_bytes: number;
+  freed_residual_bytes: number;
+  retained_residual_bytes: number;
+  outcomes: UninstalledAppOutcome[];
+  errors: string[];
+}

@@ -27,6 +27,7 @@ import {
   Clock,
   MessageSquareText,
   Wrench,
+  PackageX,
 } from 'lucide-react';
 import { SuiteConfig, SuiteId, ActiveTabId, DocSubTab } from './types';
 
@@ -139,6 +140,14 @@ export const CLEANER_SUITE: SuiteConfig = {
       icon: FolderTree,
       color: 'text-sky-500',
       activeBg: 'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800',
+    },
+    {
+      id: 'cleaner_uninstall',
+      label: '软件卸载',
+      sublabel: '应用卸载与残余清理',
+      icon: PackageX,
+      color: 'text-rose-500',
+      activeBg: 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800',
     },
     {
       id: 'cleaner_wechat',
@@ -372,9 +381,9 @@ export function resolveLaunchTarget(initialAction?: string): {
     return { suiteId: 'media', tab: initialAction };
   }
 
-  if (initialAction === 'cleaner') {
+  if (initialAction === 'cleaner' || initialAction === 'cleaner_uninstall' || initialAction === 'cleaner_usage') {
     if (isSuiteEnabled('cleaner')) {
-      return { suiteId: 'cleaner', tab: 'cleaner' };
+      return { suiteId: 'cleaner', tab: initialAction };
     }
   }
 
