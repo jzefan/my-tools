@@ -4,6 +4,7 @@ export type OnlineModule =
       name: string;
       kind: 'wechat';
       searchName: string;
+      qrSrc?: string;
     }
   | {
       id: string;
@@ -18,6 +19,7 @@ export const ONLINE_MODULES: OnlineModule[] = [
     name: '纸页快扫',
     kind: 'wechat',
     searchName: '纸页快扫',
+    qrSrc: '/online/page-scan-qr.jpg',
   },
   {
     id: 'math-variation',

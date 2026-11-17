@@ -9,7 +9,7 @@ import type {
 /** 100 MiB threshold for prompting the user about residual file deletion */
 export const RESIDUAL_ALERT_THRESHOLD_BYTES = 100 * 1024 * 1024;
 
-export type AppFilterMode = 'all' | 'large_residual';
+export type AppFilterMode = 'all' | 'user' | 'system' | 'large_residual';
 export type AppSortMode = 'total_desc' | 'residual_desc' | 'app_desc' | 'name_asc';
 
 export function sumResidualBytes(residuals: readonly AppResidualItem[]): number {
@@ -51,6 +51,12 @@ export function filterAndSortApps(
 
   const filtered = apps.filter((app) => {
     if (filterMode === 'large_residual' && !isLargeResidualApp(app)) {
+      return false;
+    }
+    if (filterMode === 'user' && app.origin !== 'user') {
+      return false;
+    }
+    if (filterMode === 'system' && app.origin !== 'system') {
       return false;
     }
     if (!normalizedQuery) return true;

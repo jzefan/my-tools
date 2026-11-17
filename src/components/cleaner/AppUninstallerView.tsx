@@ -83,6 +83,11 @@ export const AppUninstallerView: React.FC = () => {
   );
 
   const largeResidualCount = useMemo(() => findLargeResidualApps(apps).length, [apps]);
+  const userAppCount = useMemo(() => apps.filter((app) => app.origin === 'user').length, [apps]);
+  const systemAppCount = useMemo(
+    () => apps.filter((app) => app.origin === 'system').length,
+    [apps]
+  );
 
   const totalAppBytes = useMemo(
     () => apps.reduce((sum, app) => sum + app.app_size_bytes, 0),
@@ -95,11 +100,18 @@ export const AppUninstallerView: React.FC = () => {
   );
 
   const selectedApps = useMemo(
-    () => apps.filter((app) => selectedIds.has(app.id)),
+    () => apps.filter((app) => selectedIds.has(app.id) && app.removable),
     [apps, selectedIds]
   );
 
+  const removableFilteredApps = useMemo(
+    () => filteredApps.filter((app) => app.removable),
+    [filteredApps]
+  );
+
   const toggleSelect = (appId: string) => {
+    const target = apps.find((app) => app.id === appId);
+    if (target && !target.removable) return;
     setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(appId)) next.delete(appId);
@@ -122,7 +134,7 @@ export const AppUninstallerView: React.FC = () => {
       setSelectedIds(new Set());
       return;
     }
-    setSelectedIds(new Set(filteredApps.map((app) => app.id)));
+    setSelectedIds(new Set(removableFilteredApps.map((app) => app.id)));
   };
 
   const handleConfirmUninstall = async (targets: UninstallAppTarget[]) => {
@@ -157,7 +169,7 @@ export const AppUninstallerView: React.FC = () => {
                 <span>软件卸载与残余文件清理</span>
               </div>
               <span className="text-slate-500 dark:text-slate-400 font-mono text-[11px]">
-                共 {apps.length} 个应用
+                共 {apps.length} 个 · 用户 {userAppCount} · 系统 {systemAppCount}
               </span>
             </div>
 
@@ -269,7 +281,29 @@ export const AppUninstallerView: React.FC = () => {
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
                 }`}
               >
-                全部软件 ({apps.length})
+                全部 ({apps.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterMode('user')}
+                className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
+                  filterMode === 'user'
+                    ? 'bg-sky-50 dark:bg-sky-950/60 text-sky-700 dark:text-sky-300 border border-sky-200 dark:border-sky-800'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                用户安装 ({userAppCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setFilterMode('system')}
+                className={`px-2.5 py-1 rounded-lg font-medium transition-colors cursor-pointer ${
+                  filterMode === 'system'
+                    ? 'bg-slate-200/80 dark:bg-slate-700/80 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-600'
+                    : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+                }`}
+              >
+                系统自带 ({systemAppCount})
               </button>
               <button
                 type="button"
@@ -353,16 +387,19 @@ export const AppUninstallerView: React.FC = () => {
             >
               <div
                 onClick={() => toggleSelect(app.id)}
-                className="p-3.5 flex items-center justify-between gap-3 cursor-pointer"
+                className={`p-3.5 flex items-center justify-between gap-3 ${
+                  app.removable ? 'cursor-pointer' : 'cursor-default'
+                }`}
               >
                 <div className="flex items-center space-x-3 min-w-0">
                   <input
                     type="checkbox"
                     aria-label={`选择 ${app.name}`}
                     checked={isSelected}
+                    disabled={!app.removable}
                     onChange={() => toggleSelect(app.id)}
                     onClick={(e) => e.stopPropagation()}
-                    className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer"
+                    className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                   />
 
                   <div className="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 shrink-0">
@@ -379,6 +416,15 @@ export const AppUninstallerView: React.FC = () => {
                       </span>
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500">
                         {app.category}
+                      </span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded ${
+                          app.origin === 'system'
+                            ? 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                            : 'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300'
+                        }`}
+                      >
+                        {app.origin === 'system' ? '系统' : '用户'}
                       </span>
                       {isLargeResidual && (
                         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
@@ -422,11 +468,14 @@ export const AppUninstallerView: React.FC = () => {
                   <button
                     type="button"
                     aria-label={`卸载 ${app.name}`}
+                    disabled={!app.removable}
+                    title={app.removable ? '卸载' : '系统应用不可卸载'}
                     onClick={(e) => {
                       e.stopPropagation();
+                      if (!app.removable) return;
                       setPendingTargets([app]);
                     }}
-                    className="px-2.5 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/80 text-[11px] font-semibold transition-colors cursor-pointer"
+                    className="px-2.5 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/50 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800/80 text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-rose-50 dark:disabled:hover:bg-rose-950/50"
                   >
                     卸载
                   </button>
@@ -474,9 +523,11 @@ export const AppUninstallerView: React.FC = () => {
                         </span>
                       </div>
                       <div className="flex items-center space-x-3 shrink-0 ml-2">
-                        <span className="text-[10px] text-slate-400">
-                          {res.file_count.toLocaleString()} 个文件
-                        </span>
+                        {res.file_count > 1 && (
+                          <span className="text-[10px] text-slate-400">
+                            {res.file_count.toLocaleString()} 个文件
+                          </span>
+                        )}
                         <span className="font-mono text-[11px] text-slate-600 dark:text-slate-300">
                           {formatFileSize(res.size_bytes)}
                         </span>

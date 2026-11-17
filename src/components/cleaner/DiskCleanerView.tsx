@@ -27,6 +27,7 @@ import {
 import { cleanerApi } from '../../services/cleanerApi';
 import { DiskUsageView } from './DiskUsageView';
 import { AppUninstallerView } from './AppUninstallerView';
+import { DockerCleanerView } from './DockerCleanerView';
 import { api } from '../../services/api';
 import { formatDiskSize, formatFileSize } from '../../utils/format';
 import { confirmDialog, alertDialog } from '../../utils/dialog';
@@ -81,14 +82,22 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
 
   const [usageVisited, setUsageVisited] = useState(activeSubTab === 'cleaner_usage');
   const [uninstallVisited, setUninstallVisited] = useState(activeSubTab === 'cleaner_uninstall');
+  const [dockerVisited, setDockerVisited] = useState(activeSubTab === 'cleaner_docker');
   const didScanRef = useRef(false);
   useEffect(() => {
     if (activeSubTab === 'cleaner_usage') setUsageVisited(true);
     if (activeSubTab === 'cleaner_uninstall') setUninstallVisited(true);
+    if (activeSubTab === 'cleaner_docker') setDockerVisited(true);
   }, [activeSubTab]);
 
   useEffect(() => {
-    if (activeSubTab === 'cleaner_usage' || activeSubTab === 'cleaner_uninstall') return;
+    if (
+      activeSubTab === 'cleaner_usage' ||
+      activeSubTab === 'cleaner_uninstall' ||
+      activeSubTab === 'cleaner_docker'
+    ) {
+      return;
+    }
     if (didScanRef.current) return;
     didScanRef.current = true;
     void handleScan();
@@ -389,7 +398,8 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
 
   const usageActive = activeSubTab === 'cleaner_usage';
   const uninstallActive = activeSubTab === 'cleaner_uninstall';
-  const mainCleanerActive = !usageActive && !uninstallActive;
+  const dockerActive = activeSubTab === 'cleaner_docker';
+  const mainCleanerActive = !usageActive && !uninstallActive && !dockerActive;
 
   return (
     <>
@@ -401,6 +411,11 @@ export const DiskCleanerView: React.FC<DiskCleanerViewProps> = ({ activeSubTab }
       {uninstallVisited && (
         <div className={uninstallActive ? 'flex h-full min-h-0 flex-1 flex-col' : 'hidden'}>
           <AppUninstallerView />
+        </div>
+      )}
+      {dockerVisited && (
+        <div className={dockerActive ? 'flex h-full min-h-0 flex-1 flex-col' : 'hidden'}>
+          <DockerCleanerView />
         </div>
       )}
       {mainCleanerActive && scanResult?.supported === false && (

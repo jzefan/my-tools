@@ -28,7 +28,7 @@ test('workbench suites follow the requested order', () => {
 test('online modules expose a searchable mini program name and the math site', async () => {
   const { ONLINE_MODULES } = await loadTs('../src/suites/online.ts');
   assert.deepEqual(ONLINE_MODULES, [
-    { id: 'page-scan', name: '纸页快扫', kind: 'wechat', searchName: '纸页快扫' },
+    { id: 'page-scan', name: '纸页快扫', kind: 'wechat', searchName: '纸页快扫', qrSrc: '/online/page-scan-qr.jpg' },
     { id: 'math-variation', name: '小学数学举一反三', kind: 'link', url: 'https://www.math314159.com' },
   ]);
 

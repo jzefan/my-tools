@@ -28,6 +28,7 @@ import {
   MessageSquareText,
   Wrench,
   PackageX,
+  Container,
 } from 'lucide-react';
 import { SuiteConfig, SuiteId, ActiveTabId, DocSubTab } from './types';
 
@@ -148,6 +149,14 @@ export const CLEANER_SUITE: SuiteConfig = {
       icon: PackageX,
       color: 'text-rose-500',
       activeBg: 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800',
+    },
+    {
+      id: 'cleaner_docker',
+      label: 'Docker 清理',
+      sublabel: '镜像、缓存与已停容器',
+      icon: Container,
+      color: 'text-cyan-500',
+      activeBg: 'bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800',
     },
     {
       id: 'cleaner_wechat',
@@ -381,7 +390,12 @@ export function resolveLaunchTarget(initialAction?: string): {
     return { suiteId: 'media', tab: initialAction };
   }
 
-  if (initialAction === 'cleaner' || initialAction === 'cleaner_uninstall' || initialAction === 'cleaner_usage') {
+  if (
+    initialAction === 'cleaner' ||
+    initialAction === 'cleaner_uninstall' ||
+    initialAction === 'cleaner_usage' ||
+    initialAction === 'cleaner_docker'
+  ) {
     if (isSuiteEnabled('cleaner')) {
       return { suiteId: 'cleaner', tab: initialAction };
     }

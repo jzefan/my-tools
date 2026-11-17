@@ -1,6 +1,8 @@
+pub mod app_uninstaller;
 pub mod cli_merge;
 pub mod disk_cleaner;
 pub mod disk_usage;
+pub mod docker_cleaner;
 pub mod macos_privacy;
 pub mod media_publisher;
 pub mod fs_service;
@@ -437,6 +439,54 @@ async fn execute_disk_clean_path(
 }
 
 #[tauri::command]
+async fn scan_installed_apps() -> Result<Vec<app_uninstaller::InstalledAppItem>, String> {
+    blocking_task(move || {
+        let _guard = CLEANER_OPERATION
+            .lock()
+            .map_err(|_| "清理任务锁不可用".to_string())?;
+        Ok(app_uninstaller::scan_installed_apps())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn uninstall_apps(
+    request: app_uninstaller::UninstallAppsRequest,
+) -> Result<app_uninstaller::UninstallAppsResult, String> {
+    blocking_task(move || {
+        let _guard = CLEANER_OPERATION
+            .lock()
+            .map_err(|_| "清理任务锁不可用".to_string())?;
+        Ok(app_uninstaller::uninstall_apps(request))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn scan_docker_reclaim() -> Result<docker_cleaner::DockerScanResult, String> {
+    blocking_task(move || {
+        let _guard = CLEANER_OPERATION
+            .lock()
+            .map_err(|_| "清理任务锁不可用".to_string())?;
+        Ok(docker_cleaner::scan_docker_reclaim())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn execute_docker_cleanup(
+    request: docker_cleaner::DockerCleanupRequest,
+) -> Result<docker_cleaner::DockerCleanupResult, String> {
+    blocking_task(move || {
+        let _guard = CLEANER_OPERATION
+            .lock()
+            .map_err(|_| "清理任务锁不可用".to_string())?;
+        Ok(docker_cleaner::execute_docker_cleanup(request))
+    })
+    .await
+}
+
+#[tauri::command]
 async fn delete_disk_usage_path(path: String) -> Result<disk_usage::UsageDeleteResult, String> {
     blocking_task(move || Ok(disk_usage::delete_home_directory(&path))).await
 }
@@ -620,6 +670,10 @@ pub fn run() {
             delete_disk_usage_path,
             execute_disk_clean,
             execute_disk_clean_path,
+            scan_installed_apps,
+            uninstall_apps,
+            scan_docker_reclaim,
+            execute_docker_cleanup,
             open_disk_clean_settings,
             full_disk_access_enabled,
             typing_store::typing_load_database,

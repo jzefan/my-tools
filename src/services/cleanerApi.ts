@@ -11,6 +11,9 @@ import {
   InstalledAppItem,
   UninstallAppsRequest,
   UninstallAppsResult,
+  DockerScanResult,
+  DockerCleanupRequest,
+  DockerCleanupResult,
 } from '../types/cleaner';
 import { computeUninstallSummary, sumResidualBytes } from '../utils/appUninstaller';
 
@@ -223,30 +226,43 @@ class CleanerApiService {
   }
 
   async scanInstalledApps(): Promise<InstalledAppItem[]> {
-    if (isTauriEnvironment()) {
-      try {
-        return await invoke<InstalledAppItem[]>('scan_installed_apps');
-      } catch (err) {
-        console.warn('Native scan_installed_apps failed, using fallback:', err);
-      }
+    if (!isTauriEnvironment()) {
+      return mockInstalledApps.filter((app) => !uninstalledMockAppIds.has(app.id));
     }
-    return mockInstalledApps.filter((app) => !uninstalledMockAppIds.has(app.id));
+    return await invoke<InstalledAppItem[]>('scan_installed_apps');
   }
 
   async uninstallApps(request: UninstallAppsRequest): Promise<UninstallAppsResult> {
-    if (isTauriEnvironment()) {
-      try {
-        return await invoke<UninstallAppsResult>('uninstall_apps', { request });
-      } catch (err) {
-        console.warn('Native uninstall_apps failed, using fallback:', err);
+    if (!isTauriEnvironment()) {
+      const available = mockInstalledApps.filter((app) => !uninstalledMockAppIds.has(app.id));
+      const result = computeUninstallSummary(available, request.targets);
+      for (const outcome of result.outcomes) {
+        uninstalledMockAppIds.add(outcome.app_id);
       }
+      return result;
     }
-    const available = mockInstalledApps.filter((app) => !uninstalledMockAppIds.has(app.id));
-    const result = computeUninstallSummary(available, request.targets);
-    for (const outcome of result.outcomes) {
-      uninstalledMockAppIds.add(outcome.app_id);
+    return await invoke<UninstallAppsResult>('uninstall_apps', { request });
+  }
+
+  async scanDockerReclaim(): Promise<DockerScanResult> {
+    if (!isTauriEnvironment()) {
+      return mockDockerScan();
     }
-    return result;
+    return await invoke<DockerScanResult>('scan_docker_reclaim');
+  }
+
+  async executeDockerCleanup(request: DockerCleanupRequest): Promise<DockerCleanupResult> {
+    if (!isTauriEnvironment()) {
+      const selected = mockDockerScan().actions.filter((a) => request.action_ids.includes(a.id));
+      const freed = selected.reduce((sum, a) => sum + a.reclaimable_bytes, 0);
+      return {
+        freed_bytes: freed,
+        actions_run: selected.map((a) => a.id),
+        errors: [],
+        success: selected.length > 0,
+      };
+    }
+    return await invoke<DockerCleanupResult>('execute_docker_cleanup', { request });
   }
 }
 
@@ -372,12 +388,114 @@ function mockDiskUsage(path: string): DiskUsageScan {
 const MiB = 1024 ** 2;
 const uninstalledMockAppIds = new Set<string>();
 
+function mockDockerScan(): DockerScanResult {
+  return {
+    cli_available: true,
+    daemon_running: true,
+    docker_path: '/usr/local/bin/docker',
+    version: '29.8.0',
+    total_size_bytes: Math.round(20.13 * GiB),
+    total_reclaimable_bytes: Math.round(12.4 * GiB),
+    types: [
+      {
+        type_name: 'Images',
+        total_count: 18,
+        active_count: 4,
+        size_bytes: Math.round(8.2 * GiB),
+        reclaimable_bytes: Math.round(5.1 * GiB),
+      },
+      {
+        type_name: 'Containers',
+        total_count: 12,
+        active_count: 3,
+        size_bytes: Math.round(1.4 * GiB),
+        reclaimable_bytes: Math.round(0.9 * GiB),
+      },
+      {
+        type_name: 'Local Volumes',
+        total_count: 8,
+        active_count: 3,
+        size_bytes: Math.round(6.5 * GiB),
+        reclaimable_bytes: Math.round(1.2 * GiB),
+      },
+      {
+        type_name: 'Build Cache',
+        total_count: 42,
+        active_count: 0,
+        size_bytes: Math.round(4.0 * GiB),
+        reclaimable_bytes: Math.round(4.0 * GiB),
+      },
+    ],
+    actions: [
+      {
+        id: 'stopped_containers',
+        name: '已停止的容器',
+        risk_level: 'safe',
+        description: '删除 exited 容器',
+        reclaimable_bytes: Math.round(0.9 * GiB),
+        item_count: 9,
+        default_selected: true,
+      },
+      {
+        id: 'dangling_images',
+        name: '悬空镜像',
+        risk_level: 'safe',
+        description: '无标签中间层镜像',
+        reclaimable_bytes: Math.round(1.8 * GiB),
+        item_count: 6,
+        default_selected: true,
+      },
+      {
+        id: 'unused_images',
+        name: '未使用镜像',
+        risk_level: 'recommended',
+        description: '未被容器引用的镜像',
+        reclaimable_bytes: Math.round(5.1 * GiB),
+        item_count: 14,
+        default_selected: false,
+      },
+      {
+        id: 'unused_networks',
+        name: '未使用网络',
+        risk_level: 'safe',
+        description: '无容器引用的网络',
+        reclaimable_bytes: 0,
+        item_count: 3,
+        default_selected: true,
+      },
+      {
+        id: 'build_cache',
+        name: '构建缓存',
+        risk_level: 'safe',
+        description: 'BuildKit / builder 缓存',
+        reclaimable_bytes: Math.round(4.0 * GiB),
+        item_count: 42,
+        default_selected: true,
+      },
+      {
+        id: 'unused_volumes',
+        name: '未使用数据卷',
+        risk_level: 'caution',
+        description: '可能含数据库数据',
+        reclaimable_bytes: Math.round(1.2 * GiB),
+        item_count: 5,
+        default_selected: false,
+      },
+    ],
+  };
+}
+
 function createMockApp(
-  item: Omit<InstalledAppItem, 'residual_size_bytes'>
+  item: Omit<InstalledAppItem, 'residual_size_bytes' | 'removable' | 'origin'> & {
+    removable?: boolean;
+    origin?: InstalledAppItem['origin'];
+  }
 ): InstalledAppItem {
   return {
     ...item,
     residual_size_bytes: sumResidualBytes(item.residuals),
+    removable: item.removable ?? true,
+    origin: item.origin ?? 'user',
   };
 }
 

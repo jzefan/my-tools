@@ -107,6 +107,8 @@ export interface AppResidualItem {
   kind: AppResidualKind;
 }
 
+export type AppOrigin = 'system' | 'user';
+
 export interface InstalledAppItem {
   id: string;
   name: string;
@@ -118,6 +120,10 @@ export interface InstalledAppItem {
   residual_size_bytes: number;
   residuals: AppResidualItem[];
   last_used_at?: number;
+  /** System / protected apps are listed but cannot be uninstalled. */
+  removable: boolean;
+  /** macOS / Apple bundled vs user-installed. */
+  origin: AppOrigin;
 }
 
 export interface UninstallAppTarget {
@@ -146,4 +152,46 @@ export interface UninstallAppsResult {
   retained_residual_bytes: number;
   outcomes: UninstalledAppOutcome[];
   errors: string[];
+}
+
+export type DockerRiskLevel = 'safe' | 'recommended' | 'caution';
+
+export interface DockerDfType {
+  type_name: string;
+  total_count: number;
+  active_count: number;
+  size_bytes: number;
+  reclaimable_bytes: number;
+}
+
+export interface DockerCleanAction {
+  id: string;
+  name: string;
+  risk_level: DockerRiskLevel;
+  description: string;
+  reclaimable_bytes: number;
+  item_count: number;
+  default_selected: boolean;
+}
+
+export interface DockerScanResult {
+  cli_available: boolean;
+  daemon_running: boolean;
+  docker_path?: string | null;
+  version?: string | null;
+  types: DockerDfType[];
+  actions: DockerCleanAction[];
+  total_size_bytes: number;
+  total_reclaimable_bytes: number;
+}
+
+export interface DockerCleanupRequest {
+  action_ids: string[];
+}
+
+export interface DockerCleanupResult {
+  freed_bytes: number;
+  actions_run: string[];
+  errors: string[];
+  success: boolean;
 }

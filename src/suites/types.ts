@@ -8,6 +8,7 @@ export type CleanerSubTab =
   | 'cleaner_usage'
   | 'cleaner'
   | 'cleaner_uninstall'
+  | 'cleaner_docker'
   | 'cleaner_wechat'
   | 'cleaner_qq'
   | 'cleaner_developer'

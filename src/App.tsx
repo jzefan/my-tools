@@ -356,11 +356,11 @@ export function App() {
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-slate-100 antialiased font-sans">
-      {multiSuite && !isTypingActive && (
+      {multiSuite && !isTypingActive && !showHome && (
         <WorkspaceTabs
           suites={enabledSuites}
           openIds={openModules.map((module) => module.suiteId)}
-          activeId={showHome ? null : activeSuite}
+          activeId={activeSuite}
           onSelectHome={handleReturnHome}
           onSelect={(suiteId) => openSuite(suiteId)}
           onClose={closeSuite}
@@ -374,6 +374,18 @@ export function App() {
             onEnterSuite={openSuite}
             openSuiteIds={openModules.map((module) => module.suiteId)}
             compact
+            tabs={
+              <WorkspaceTabs
+                embedded
+                suites={enabledSuites}
+                openIds={openModules.map((module) => module.suiteId)}
+                activeId={null}
+                onSelectHome={handleReturnHome}
+                onSelect={(suiteId) => openSuite(suiteId)}
+                onClose={closeSuite}
+                onOpen={(suiteId) => openSuite(suiteId)}
+              />
+            }
           />
         </div>
       )}

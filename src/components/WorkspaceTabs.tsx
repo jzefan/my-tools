@@ -10,6 +10,7 @@ interface WorkspaceTabsProps {
   onSelect: (id: SuiteId) => void;
   onClose: (id: SuiteId) => void;
   onOpen: (id: SuiteId) => void;
+  embedded?: boolean;
 }
 
 export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
@@ -20,6 +21,7 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
   onSelect,
   onClose,
   onOpen,
+  embedded = false,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -36,23 +38,29 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
     return () => window.removeEventListener('mousedown', onPointer);
   }, [menuOpen]);
 
-  return (
-    <div className="titlebar-drag relative z-30 shrink-0 flex items-end gap-1 pl-20 pr-2 pt-7 bg-slate-100 dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800">
+  const homeActive = activeId === null;
+  const tabClass = (active: boolean) =>
+    embedded
+      ? active
+        ? 'text-slate-800 dark:text-slate-100 border-indigo-500'
+        : 'text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-700 dark:hover:text-slate-200'
+      : active
+        ? 'bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 border-indigo-500'
+        : 'text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-700 dark:hover:text-slate-200';
+
+  const bar = (
+    <>
       <button
         type="button"
         onClick={onSelectHome}
         title="工作台"
-        className={`titlebar-nodrag flex items-center gap-1.5 h-8 px-3 text-xs rounded-t-md border-b-2 cursor-pointer ${
-          activeId === null
-            ? 'bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 border-indigo-500'
-            : 'text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-700 dark:hover:text-slate-200'
-        }`}
+        className={`titlebar-nodrag flex items-center gap-1.5 h-8 px-3 text-xs rounded-t-md border-b-2 cursor-pointer ${tabClass(homeActive)}`}
       >
         <LayoutGrid className="w-3.5 h-3.5" />
         工作台
       </button>
 
-      <div className="titlebar-nodrag flex-1 min-w-0 flex items-end">
+      <div className={`titlebar-nodrag min-w-0 flex items-end ${embedded ? 'max-w-full' : 'flex-1'}`}>
         <div className="flex items-end gap-0.5 min-w-0 overflow-x-auto overflow-y-hidden">
         {openSuites.map((suite) => {
           const Icon = suite.icon;
@@ -66,11 +74,7 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
               onAuxClick={(event) => {
                 if (event.button === 1) onClose(suite.id);
               }}
-              className={`group flex items-center h-8 max-w-[168px] shrink-0 rounded-t-md border-b-2 ${
-                active
-                  ? 'bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 border-indigo-500'
-                  : 'text-slate-500 dark:text-slate-400 border-transparent hover:text-slate-700 dark:hover:text-slate-200'
-              }`}
+              className={`group flex items-center h-8 max-w-[168px] shrink-0 rounded-t-md border-b-2 ${tabClass(active)}`}
             >
               <button
                 type="button"
@@ -133,6 +137,20 @@ export const WorkspaceTabs: React.FC<WorkspaceTabsProps> = ({
           )}
         </div>
       </div>
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <div className="relative z-30 flex items-end gap-1 min-w-0 max-w-[min(640px,54vw)]">
+        {bar}
+      </div>
+    );
+  }
+
+  return (
+    <div className="titlebar-drag relative z-30 shrink-0 flex items-end gap-1 pl-20 pr-2 pt-7 bg-slate-100 dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800">
+      {bar}
     </div>
   );
 };

@@ -8,8 +8,8 @@ import {
   getAppResidualBytes,
   getAppTotalBytes,
   isLargeResidualApp,
-} from '../src/utils/appUninstaller';
-import type { InstalledAppItem } from '../src/types/cleaner';
+} from '../src/utils/appUninstaller.ts';
+import type { InstalledAppItem } from '../src/types/cleaner.ts';
 
 const MiB = 1024 * 1024;
 
@@ -37,6 +37,8 @@ function makeApp(
     app_size_bytes: appMiB * MiB,
     residual_size_bytes: residuals.reduce((s, r) => s + r.size_bytes, 0),
     residuals,
+    removable: true,
+    origin: 'user',
   };
 }
 
@@ -72,6 +74,18 @@ test('filterAndSortApps filters by query and large_residual mode and sorts accur
     makeApp('docker', 'Docker Desktop', 1900, [580, 60]),
     makeApp('ps', 'Adobe Photoshop', 3200, [980, 460]),
   ];
+  apps[0] = { ...apps[0], origin: 'user' };
+  const systemKeynote = { ...makeApp('keynote', 'Keynote讲演', 800, [10]), origin: 'system' as const };
+  const mixed = [...apps, systemKeynote];
+
+  assert.deepEqual(
+    filterAndSortApps(mixed, '', 'user', 'name_asc').map((a) => a.id).sort(),
+    ['docker', 'ps', 'raycast']
+  );
+  assert.deepEqual(
+    filterAndSortApps(mixed, '', 'system', 'name_asc').map((a) => a.id),
+    ['keynote']
+  );
 
   assert.deepEqual(
     filterAndSortApps(apps, 'dock', 'all', 'total_desc').map((a) => a.id),

@@ -1,24 +1,24 @@
-# 磁盘清理贴近 Mole（保留微信/QQ 特色）
+# Docker 安全磁盘清理
 
 ## Plan
 
-- [x] 扩展 `disk_cleaner.rs` 规则与扫描模式（DirChildren / AppSupportLeaves / HomeFiles）
-- [x] 修复 `*` 通配路径只扫不清的 bug（execute 走 `expand_sub_path`）
-- [x] 贴近 Mole：Library/Caches 子目录扫、App Support 叶子缓存、GoogleUpdater、Brave、Cargo/Rustup/Expo/Bun、zsh
-- [x] 保留微信/QQ 深度路径；文案「专清」→「清理」
-- [x] 同步侧栏 / 筛选 / Home 文案；更新 developer 副标题
-- [x] 跑 `cargo test`（disk_cleaner）与必要前端类型对齐
-- [x] Review 记录
+- [x] `docker_cleaner.rs`：检测 CLI/daemon，`docker system df` 汇总，可勾选安全清理项
+- [x] 默认：已停止容器、悬空镜像、未用网络、构建缓存；未用镜像为 recommended；卷为 caution 默认不勾选
+- [x] 注册 `scan_docker_reclaim` / `execute_docker_cleanup`
+- [x] 前端：侧栏「Docker 清理」+ `DockerCleanerView`（扫描 → 勾选 → 确认）
+- [x] daemon 未运行时简短不可用态；无 CLI 时同样处理
+- [x] 单测（解析/状态机 mock）+ `cargo check` / `tsc`
 
 ## Notes
 
-- 不做 sudo 系统级清理（保持无提权）
-- 不做 Docker 镜像/卷硬删（危险）；不扫家目录外路径（如 Clang module cache）
-- `.cache` 子项排除模型权重目录；`Library/Caches` 排除已有专属规则的顶层名
+- 不对齐 `docker system prune -a --volumes` 默认行为
+- 对齐 Mole：`builder prune -af` + dangling image prune + `system df` 报告
+- 命名卷（如 postgres）不默认删除；选卷时确认文案额外提示
+- 同时勾选「未使用镜像」与「悬空镜像」时，后端只跑 `image prune -a`
 
 ## Review
 
-- 规则由 18 条扩到约 28 条；新增 `library_caches` / `dot_cache` / `app_support_caches` / `google_updater_cache` / Brave / Bun·Corepack / Cargo·Rustup / Expo / zsh
-- 微信/QQ 深度路径保留；UI「专清」→「清理」；系统侧栏改为「系统与应用缓存」并合并 system_logs + app_cache + trash
-- `cargo test --lib disk_cleaner::`：9 passed
-- 仍与 Mole 有意差异：无 sudo 系统日志、无 Docker 硬删、无进程守卫/年龄阈值、GUI 勾选后删
+- 新增 `src-tauri/src/docker_cleaner.rs` + Tauri 命令
+- 侧栏 `cleaner_docker` → `DockerCleanerView`
+- `cargo test --lib docker_cleaner::`：5 passed
+- `tsc --noEmit`：通过
